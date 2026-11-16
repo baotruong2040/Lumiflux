@@ -1,0 +1,760 @@
+openapi: 3.0.3
+info:
+  title: Discord Clone API
+  version: 1.0.0
+  description: Hợp đồng REST API v1 và điểm nâng cấp WebSocket cho đồ án Discord Clone.
+servers:
+  - url: http://localhost:8080
+    description: Local Development Server
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: FORBIDDEN
+            message:
+              type: string
+              example: You do not have permission to perform this action
+
+    User:
+      type: object
+      required: [id, username, email, displayName, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    AuthResponse:
+      type: object
+      required: [accessToken, refreshToken, user]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        user:
+          $ref: '#/components/schemas/User'
+
+    Guild:
+      type: object
+      required: [id, name, ownerId, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        iconUrl:
+          type: string
+          nullable: true
+        ownerId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    GuildMember:
+      type: object
+      required: [guildId, userId, role, joinedAt, user]
+      properties:
+        guildId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        nickname:
+          type: string
+          nullable: true
+        role:
+          type: string
+          enum: [owner, admin, member]
+        online:
+          type: boolean
+        joinedAt:
+          type: string
+          format: date-time
+        user:
+          $ref: '#/components/schemas/User'
+
+    Channel:
+      type: object
+      required: [id, guildId, name, type, position, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        guildId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: integer
+          description: 0 = text channel
+          example: 0
+        topic:
+          type: string
+          nullable: true
+        position:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    MessageAuthor:
+      type: object
+      required: [id, username, displayName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        displayName:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+
+    Message:
+      type: object
+      required: [id, channelId, author, content, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        channelId:
+          type: string
+          format: uuid
+        author:
+          $ref: '#/components/schemas/MessageAuthor'
+        content:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        nonce:
+          type: string
+          nullable: true
+        editedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    Invite:
+      type: object
+      required: [code, guildId, createdBy, uses, createdAt]
+      properties:
+        code:
+          type: string
+        guildId:
+          type: string
+          format: uuid
+        createdBy:
+          type: string
+          format: uuid
+        maxUses:
+          type: integer
+          nullable: true
+        uses:
+          type: integer
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness check
+      responses:
+        '200':
+          description: Service is alive
+
+  /readyz:
+    get:
+      summary: Readiness check (PostgreSQL & Redis)
+      responses:
+        '200':
+          description: Dependencies are ready
+        '503':
+          description: Dependencies unavailable
+
+  /api/v1/auth/register:
+    post:
+      summary: Đăng ký tài khoản mới
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, displayName, password]
+              properties:
+                username:
+                  type: string
+                  minLength: 3
+                  maxLength: 32
+                email:
+                  type: string
+                  format: email
+                displayName:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        '201':
+          description: Đăng ký thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '409':
+          description: Username hoặc email đã tồn tại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/auth/login:
+    post:
+      summary: Đăng nhập
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login, password]
+              properties:
+                login:
+                  type: string
+                  description: Username hoặc Email
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Đăng nhập thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Sai thông tin đăng nhập
+
+  /api/v1/auth/refresh:
+    post:
+      summary: Xoay vòng refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '200':
+          description: Cấp cặp token mới
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Refresh token không hợp lệ hoặc đã sử dụng
+
+  /api/v1/auth/logout:
+    post:
+      summary: Đăng xuất và hủy refresh token
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        '204':
+          description: Đăng xuất thành công
+
+  /api/v1/ws/ticket:
+    post:
+      summary: Cấp vé dùng một lần (30s) để mở kết nối WebSocket
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Vé WebSocket
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket]
+                properties:
+                  ticket:
+                    type: string
+
+  /api/v1/users/@me:
+    get:
+      summary: Lấy thông tin người dùng hiện tại
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Thông tin hồ sơ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+    patch:
+      summary: Cập nhật tên hiển thị hoặc avatar
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName:
+                  type: string
+                avatarUrl:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: Cập nhật thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /api/v1/guilds:
+    post:
+      summary: Tạo server mới (tự động tạo kênh general và gán owner)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                iconUrl:
+                  type: string
+                  nullable: true
+      responses:
+        '201':
+          description: Tạo server thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Guild'
+    get:
+      summary: Lấy danh sách server người dùng đã tham gia
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Danh sách server
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Guild'
+
+  /api/v1/guilds/{guildId}:
+    parameters:
+      - name: guildId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Xem chi tiết server
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Chi tiết server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Guild'
+    patch:
+      summary: Đổi tên hoặc icon server (chỉ Owner)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                iconUrl:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: Đã cập nhật
+    delete:
+      summary: Xóa server (chỉ Owner)
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Đã xóa server
+
+  /api/v1/guilds/{guildId}/members:
+    get:
+      summary: Lấy danh sách thành viên server
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: guildId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Danh sách thành viên
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GuildMember'
+
+  /api/v1/guilds/{guildId}/members/@me:
+    delete:
+      summary: Rời khỏi server (Owner bị chặn 403)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: guildId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Rời server thành công
+        '403':
+          description: Owner không thể rời server
+
+  /api/v1/guilds/{guildId}/invites:
+    post:
+      summary: Tạo mã mời tham gia server (mọi thành viên)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: guildId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                maxUses:
+                  type: integer
+                  nullable: true
+                expiresInHours:
+                  type: integer
+                  nullable: true
+      responses:
+        '201':
+          description: Mã mời được tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invite'
+
+  /api/v1/invites/{code}/accept:
+    post:
+      summary: Chấp nhận mã mời để tham gia server
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Tham gia server thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Guild'
+
+  /api/v1/guilds/{guildId}/channels:
+    parameters:
+      - name: guildId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Lấy danh sách kênh của server
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Danh sách kênh
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Channel'
+    post:
+      summary: Tạo kênh văn bản mới (Owner/Admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                topic:
+                  type: string
+                  nullable: true
+      responses:
+        '201':
+          description: Tạo kênh thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Channel'
+
+  /api/v1/channels/{channelId}:
+    parameters:
+      - name: channelId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      summary: Đổi tên hoặc mô tả kênh (Owner/Admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                topic:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: Cập nhật kênh thành công
+    delete:
+      summary: Xóa kênh (Owner/Admin)
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Đã xóa kênh
+
+  /api/v1/channels/{channelId}/messages:
+    parameters:
+      - name: channelId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Tải lịch sử tin nhắn (cursor pagination theo ID)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Danh sách tin nhắn
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+    post:
+      summary: Gửi tin nhắn mới
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+                nonce:
+                  type: string
+                  maxLength: 64
+      responses:
+        '201':
+          description: Tin nhắn đã lưu và phát sự kiện
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+
+  /api/v1/channels/{channelId}/messages/{messageId}:
+    parameters:
+      - name: channelId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: messageId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      summary: Sửa nội dung tin nhắn của chính mình
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        '200':
+          description: Đã sửa tin nhắn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+    delete:
+      summary: Xóa mềm tin nhắn (Tác giả hoặc Owner/Admin)
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Đã xóa tin nhắn
+
+  /ws:
+    get:
+      summary: Nâng cấp kết nối lên WebSocket bằng vé dùng một lần
+      parameters:
+        - name: ticket
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '101':
+          description: Switching Protocols to WebSocket
+        '401':
+          description: Ticket không hợp lệ hoặc đã hết hạn
