@@ -49,8 +49,8 @@ Mọi phản hồi lỗi đều tuân theo schema `ErrorResponse`:
 | `401` | `INVALID_CREDENTIALS` | Sai username/email hoặc mật khẩu. |
 | `401` | `INVALID_REFRESH_TOKEN` | Refresh token không tồn tại, đã dùng hoặc đã hết hạn. |
 | `403` | `FORBIDDEN` | Không có quyền thực hiện thao tác. |
-| `404` | `USER_NOT_FOUND` / `NOT_FOUND` | Không tìm thấy tài nguyên. |
-| `409` | `USERNAME_TAKEN` / `EMAIL_TAKEN` / `CONFLICT` | Trùng `username` hoặc `email` (không phân biệt hoa/thường nhờ PostgreSQL `CITEXT`). |
+| `404` | `USER_NOT_FOUND` / `GUILD_NOT_FOUND` / `INVITE_NOT_FOUND` | Không tìm thấy tài nguyên. |
+| `409` | `USERNAME_TAKEN` / `EMAIL_TAKEN` / `ALREADY_MEMBER` / `CONFLICT` | Dữ liệu xung đột hoặc đã tồn tại. |
 | `429` | `RATE_LIMITED` | Vượt giới hạn tần suất (kèm header `Retry-After`). |
 | `500` | `INTERNAL_ERROR` | Lỗi nội bộ server (panic cũng được middleware `Recover` bắt an toàn). |
 | `503` | *(xem `/readyz`)* | Phụ thuộc PostgreSQL hoặc Redis không sẵn sàng. |
@@ -235,7 +235,143 @@ Cập nhật một phần hồ sơ người dùng (`displayName` và/hoặc `ava
 
 ---
 
-## 5. Biến môi trường cấu hình (`internal/config`)
+## 5. Guild, Membership & Invite Endpoints
+
+Tất cả endpoint trong nhóm `/api/v1/guilds` và `/api/v1/invites` yêu cầu header `Authorization: Bearer <accessToken>`.
+
+### 5.1. `POST /api/v1/guilds`
+Tạo server mới trong **1 DB transaction**: chèn bản ghi `guilds`, tạo kênh mặc định `#general` (`type = 0`, `position = 0`), và thêm người tạo vào `guild_members` với vai trò `owner`.
+
+**Request Body:**
+```json
+{
+  "name": "Lumiflux HQ",
+  "iconUrl": "https://cdn.example.com/icon.png"
+}
+```
+- `name`: 1–100 ký tự (sau `TrimSpace`).
+- `iconUrl`: tùy chọn; nếu có phải là URL `http://` hoặc `https://` hợp lệ (tối đa 2048 ký tự).
+
+**Response `201 Created`:**
+```json
+{
+  "id": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a6c",
+  "name": "Lumiflux HQ",
+  "iconUrl": "https://cdn.example.com/icon.png",
+  "ownerId": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a6b",
+  "createdAt": "2026-11-25T14:00:00Z"
+}
+```
+
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`.
+
+### 5.2. `GET /api/v1/guilds`
+Lấy danh sách các server mà người dùng hiện tại đang tham gia (`[]` nếu chưa tham gia server nào).
+
+**Response `200 OK`:** Mảng `Guild[]`.
+
+### 5.3. `GET /api/v1/guilds/:guildId`
+Xem chi tiết một server (yêu cầu người gọi là thành viên của server).
+
+**Response `200 OK`:** Đối tượng `Guild`.  
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 GUILD_NOT_FOUND`.
+
+### 5.4. `PATCH /api/v1/guilds/:guildId`
+Cập nhật `name` và/hoặc `iconUrl` của server (**chỉ `owner`**).
+
+**Request Body:**
+```json
+{
+  "name": "Lumiflux Updated",
+  "iconUrl": null
+}
+```
+- Bỏ qua `iconUrl`: giữ nguyên giá trị cũ; truyền `null` hoặc `""`: xóa icon.
+
+**Response `200 OK`:** Đối tượng `Guild` sau khi cập nhật.  
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 GUILD_NOT_FOUND`.
+
+### 5.5. `DELETE /api/v1/guilds/:guildId`
+Xóa server (**chỉ `owner`**; cascade xóa kênh, thành viên và mã mời liên quan).
+
+**Response:** `204 No Content`.  
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 GUILD_NOT_FOUND`.
+
+### 5.6. `GET /api/v1/guilds/:guildId/members`
+Lấy danh sách thành viên trong server kèm vai trò (`owner`, `admin`, `member`), thông tin `user` và trạng thái `online` (đọc qua Redis `MGET presence:{userID}`).
+
+**Response `200 OK`:** Mảng `GuildMember[]`:
+```json
+[
+  {
+    "guildId": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a6c",
+    "userId": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a6b",
+    "nickname": null,
+    "role": "owner",
+    "online": false,
+    "joinedAt": "2026-11-25T14:00:00Z",
+    "user": {
+      "id": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a6b",
+      "username": "truong_dev",
+      "email": "truong@example.com",
+      "displayName": "Truong",
+      "avatarUrl": null,
+      "createdAt": "2026-11-25T13:20:00Z"
+    }
+  }
+]
+```
+
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 GUILD_NOT_FOUND`.
+
+### 5.7. `DELETE /api/v1/guilds/:guildId/members/@me`
+Rời khỏi server và kích hoạt hook `GuildSubscriptionManager.Unsubscribe` (chuẩn bị cho WebSocket Hub ADR-007).  
+- Theo **ADR-006**, **`owner` bị chặn** với `403 FORBIDDEN` (muốn thoát phải dùng `DELETE /api/v1/guilds/:guildId`).
+
+**Response:** `204 No Content`.  
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 GUILD_NOT_FOUND`.
+
+### 5.8. `POST /api/v1/guilds/:guildId/invites`
+Tạo mã mời 8 ký tự cho server (**mọi thành viên** đều có quyền tạo theo **ADR-005**). Request body là tùy chọn.
+
+**Request Body (tùy chọn):**
+```json
+{
+  "maxUses": 10,
+  "expiresInHours": 24
+}
+```
+- Bỏ qua body hoặc bỏ qua `expiresInHours`: mặc định hết hạn sau **7 ngày** (`168h`), `maxUses = null` (không giới hạn).
+- Truyền `"expiresInHours": null`: không giới hạn thời gian.
+
+**Response `201 Created`:**
+```json
+{
+  "code": "aB3k9ZpQ",
+  "guildId": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a6c",
+  "createdBy": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a6b",
+  "maxUses": 10,
+  "uses": 0,
+  "expiresAt": "2026-11-26T14:00:00Z",
+  "createdAt": "2026-11-25T14:00:00Z"
+}
+```
+
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 GUILD_NOT_FOUND`.
+
+### 5.9. `POST /api/v1/invites/:code/accept`
+Chấp nhận mã mời trong 1 transaction (`SELECT ... FOR UPDATE`), tăng `uses`, thêm thành viên với vai trò `member` và gọi `GuildSubscriptionManager.Subscribe`.
+
+**Response `200 OK`:** Đối tượng `Guild`.  
+**Lỗi có thể trả về:**
+- `400 INVITE_EXPIRED`: mã mời đã quá hạn `expiresAt`.
+- `400 INVITE_EXHAUSTED`: mã mời đã đạt `maxUses`.
+- `404 INVITE_NOT_FOUND`: mã mời không tồn tại.
+- `409 ALREADY_MEMBER`: người dùng đã là thành viên server này.
+
+---
+
+## 6. Biến môi trường cấu hình (`internal/config`)
 
 | Biến | Mặc định (Dev) | Mô tả |
 | :--- | :--- | :--- |
@@ -257,14 +393,14 @@ Cập nhật một phần hồ sơ người dùng (`displayName` và/hoặc `ava
 
 ---
 
-## 6. Trạng thái triển khai theo hợp đồng `openapi.yaml`
+## 7. Trạng thái triển khai theo hợp đồng `openapi.yaml`
 
 | Nhóm API | Endpoint | Trạng thái |
 | :--- | :--- | :--- |
 | **Health** | `GET /healthz`, `GET /readyz` | Đã triển khai |
 | **Auth** | `POST /api/v1/auth/register`, `/login`, `/refresh`, `/logout` | Đã triển khai |
 | **Users** | `GET /api/v1/users/@me`, `PATCH /api/v1/users/@me` | Đã triển khai |
-| **Guilds & Invites** | `/api/v1/guilds/**`, `/api/v1/invites/{code}/accept` | Kế hoạch (Ngày 8) |
+| **Guilds & Invites** | `/api/v1/guilds/**`, `/api/v1/invites/{code}/accept` | Đã triển khai |
 | **Channels** | `/api/v1/guilds/{guildId}/channels`, `/api/v1/channels/{channelId}` | Kế hoạch (Ngày 9) |
 | **Messages** | `/api/v1/channels/{channelId}/messages/**` | Kế hoạch (Ngày 10) |
 | **WebSocket** | `POST /api/v1/ws/ticket`, `GET /ws?ticket=...` | Kế hoạch (Ngày 12–13) |

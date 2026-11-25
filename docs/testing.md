@@ -26,16 +26,16 @@
 | `TC-AUTH-02` | Đăng ký trùng `username` hoặc `email` (kể cả khác chữ hoa/thường) | Trả về `409 Conflict` nhờ cột `CITEXT`. | `[x]` |
 | `TC-AUTH-03` | Đăng nhập đúng thông tin | Trả về `accessToken` (15p) và `refreshToken` (7 ngày), lưu hash vào Redis. | `[x]` |
 | `TC-AUTH-04` | Gọi `POST /auth/refresh` bằng refresh token hợp lệ | Cấp cặp token mới; dùng lại refresh token cũ ngay sau đó bị từ chối `401`. | `[x]` |
-| `TC-AUTH-05` | Access token hết hạn khi client đang mở | `httpClient` tự động gọi `/auth/refresh` và thực thi lại request gốc thành công. | `[ ]` *(BE pass; chờ FE Ngày 7)* |
+| `TC-AUTH-05` | Access token hết hạn khi client đang mở | `httpClient` tự động gọi `/auth/refresh` và thực thi lại request gốc thành công. | `[x]` |
 | `TC-AUTH-06` | Đăng nhập sai 11 lần trong 1 phút từ một IP | Lần thứ 11 trả `429 RATE_LIMITED`. | `[x]` |
 
 ### 2.2. Guild, Membership, Invite & Channel (RBAC)
 | Mã TC | Kịch bản kiểm thử | Kết quả kỳ vọng | Trạng thái |
 | :--- | :--- | :--- | :--- |
-| `TC-GLD-01` | Tạo server mới | Tạo đồng thời guild, kênh `#general` và gán người tạo làm `owner`. | `[ ]` |
-| `TC-GLD-02` | `Owner` gọi `DELETE /guilds/:id/members/@me` | Từ chối với mã `403 FORBIDDEN`. | `[ ]` |
-| `TC-GLD-03` | `Member` tạo mã mời và tài khoản khác nhập mã mời | Tham gia server thành công; danh sách thành viên tự cập nhật qua `GUILD_MEMBER_ADD`. | `[ ]` |
-| `TC-GLD-04` | Nhập mã mời đã hết hạn hoặc hết `max_uses` | Từ chối `400` với `INVITE_EXPIRED` hoặc `INVITE_EXHAUSTED`. | `[ ]` |
+| `TC-GLD-01` | Tạo server mới | Tạo đồng thời guild, kênh `#general` và gán người tạo làm `owner`. | `[x]` |
+| `TC-GLD-02` | `Owner` gọi `DELETE /guilds/:id/members/@me` | Từ chối với mã `403 FORBIDDEN`. | `[x]` |
+| `TC-GLD-03` | `Member` tạo mã mời và tài khoản khác nhập mã mời | Tham gia server thành công; danh sách thành viên tự cập nhật qua `GUILD_MEMBER_ADD`. | `[ ]` *(REST/DB pass; chờ WS `GUILD_MEMBER_ADD` Ngày 12–13)* |
+| `TC-GLD-04` | Nhập mã mời đã hết hạn hoặc hết `max_uses` | Từ chối `400` với `INVITE_EXPIRED` hoặc `INVITE_EXHAUSTED`. | `[x]` |
 | `TC-GLD-05` | Thành viên rời server khi tab đang mở (ADR-007) | Tab đó không còn nhận `MESSAGE_CREATE` của server cũ; những người còn lại nhận `GUILD_MEMBER_REMOVE`. | `[ ]` |
 | `TC-GLD-06` | Gán `admin` bằng SQL, rồi `POST` kênh và xóa tin của `member` | Thành công; `member` thường vẫn bị `403`. | `[ ]` |
 | `TC-GLD-07` | `Owner` xóa server khi thành viên khác đang online | Client kia nhận `GUILD_DELETE`, server biến mất khỏi thanh bên, không cần F5. | `[ ]` |

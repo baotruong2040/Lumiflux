@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/truong/discord-clone-api/internal/config"
 	"github.com/truong/discord-clone-api/internal/controller"
 	"github.com/truong/discord-clone-api/internal/controller/dto"
+	"github.com/truong/discord-clone-api/internal/domain"
 	"github.com/truong/discord-clone-api/internal/repository/postgres"
 	"github.com/truong/discord-clone-api/internal/repository/redisstore"
 	"github.com/truong/discord-clone-api/internal/router"
@@ -33,14 +35,47 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+type subEvent struct {
+	userID  uuid.UUID
+	guildID uuid.UUID
+}
+
+type recordingSubManager struct {
+	mu           sync.Mutex
+	subscribed   []subEvent
+	unsubscribed []subEvent
+}
+
+func (m *recordingSubManager) Subscribe(_ context.Context, userID, guildID uuid.UUID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.subscribed = append(m.subscribed, subEvent{userID: userID, guildID: guildID})
+}
+
+func (m *recordingSubManager) Unsubscribe(_ context.Context, userID, guildID uuid.UUID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.unsubscribed = append(m.unsubscribed, subEvent{userID: userID, guildID: guildID})
+}
+
+func (m *recordingSubManager) snapshot() (subscribed []subEvent, unsubscribed []subEvent) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	subscribed = append([]subEvent(nil), m.subscribed...)
+	unsubscribed = append([]subEvent(nil), m.unsubscribed...)
+	return subscribed, unsubscribed
+}
+
 type testEnv struct {
-	cfg         *config.Config
-	pool        *pgxpool.Pool
-	redis       *redis.Client
-	jwtMgr      *jwtutil.Manager
-	handler     http.Handler
-	createdIDs  []uuid.UUID
-	redisClean  []string
+	cfg             *config.Config
+	pool            *pgxpool.Pool
+	redis           *redis.Client
+	jwtMgr          *jwtutil.Manager
+	subs            *recordingSubManager
+	handler         http.Handler
+	createdIDs      []uuid.UUID
+	createdGuildIDs []uuid.UUID
+	redisClean      []string
 }
 
 func setupIntegrationEnv(t *testing.T) *testEnv {
@@ -62,13 +97,20 @@ func setupIntegrationEnv(t *testing.T) *testEnv {
 
 	log := logger.NewWithWriter(io.Discard, "error")
 	jwtMgr := jwtutil.NewManager(cfg.JWTSecret, cfg.AccessTokenTTL)
+	userRepo := postgres.NewUserRepository(pool)
+	guildRepo := postgres.NewGuildRepository(pool)
+	inviteRepo := postgres.NewInviteRepository(pool)
+	subs := &recordingSubManager{}
+
 	authSvc := service.NewAuthService(
-		postgres.NewUserRepository(pool),
+		userRepo,
 		redisstore.NewTokenStore(redisClient),
 		hasher.NewBcryptHasher(bcrypt.MinCost),
 		jwtMgr,
 		cfg.RefreshTokenTTL,
 	)
+	guildSvc := service.NewGuildService(guildRepo, redisstore.NewPresenceStore(redisClient), subs)
+	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, subs)
 
 	engine := router.New(router.Dependencies{
 		Config:           cfg,
@@ -78,6 +120,8 @@ func setupIntegrationEnv(t *testing.T) *testEnv {
 		HealthController: controller.NewHealthController(postgres.NewHealthChecker(pool), redisstore.NewHealthChecker(redisClient), log),
 		AuthController:   controller.NewAuthController(authSvc),
 		UserController:   controller.NewUserController(authSvc, middleware.GetUserID),
+		GuildController:  controller.NewGuildController(guildSvc, middleware.GetUserID),
+		InviteController: controller.NewInviteController(inviteSvc, middleware.GetUserID),
 	})
 
 	env := &testEnv{
@@ -85,12 +129,16 @@ func setupIntegrationEnv(t *testing.T) *testEnv {
 		pool:    pool,
 		redis:   redisClient,
 		jwtMgr:  jwtMgr,
+		subs:    subs,
 		handler: engine,
 	}
 
 	t.Cleanup(func() {
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		for _, gid := range env.createdGuildIDs {
+			_, _ = env.pool.Exec(cleanCtx, `DELETE FROM guilds WHERE id = $1`, gid)
+		}
 		for _, id := range env.createdIDs {
 			_, _ = env.pool.Exec(cleanCtx, `DELETE FROM users WHERE id = $1`, id)
 		}
@@ -107,6 +155,12 @@ func setupIntegrationEnv(t *testing.T) *testEnv {
 func (e *testEnv) trackUser(id uuid.UUID) {
 	e.createdIDs = append(e.createdIDs, id)
 }
+
+func (e *testEnv) trackGuild(id uuid.UUID) {
+	e.createdGuildIDs = append(e.createdGuildIDs, id)
+}
+
+var _ domain.GuildSubscriptionManager = (*recordingSubManager)(nil)
 
 func (e *testEnv) trackRedisKey(key string) {
 	e.redisClean = append(e.redisClean, key)

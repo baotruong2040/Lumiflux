@@ -11,6 +11,7 @@ import (
 
 	"github.com/truong/discord-clone-api/internal/config"
 	"github.com/truong/discord-clone-api/internal/controller"
+	"github.com/truong/discord-clone-api/internal/domain"
 	"github.com/truong/discord-clone-api/internal/repository/postgres"
 	"github.com/truong/discord-clone-api/internal/repository/redisstore"
 	"github.com/truong/discord-clone-api/internal/router"
@@ -53,15 +54,21 @@ func main() {
 	}()
 
 	userRepo := postgres.NewUserRepository(pgPool)
+	guildRepo := postgres.NewGuildRepository(pgPool)
+	inviteRepo := postgres.NewInviteRepository(pgPool)
 	tokenStore := redisstore.NewTokenStore(redisClient)
+	presenceStore := redisstore.NewPresenceStore(redisClient)
 	rateLimiter := redisstore.NewRateLimiter(redisClient)
 	pgHealth := postgres.NewHealthChecker(pgPool)
 	redisHealth := redisstore.NewHealthChecker(redisClient)
 
 	pwHasher := hasher.NewBcryptHasher(cfg.BcryptCost)
 	jwtMgr := jwtutil.NewManager(cfg.JWTSecret, cfg.AccessTokenTTL)
+	subMgr := domain.NoopGuildSubscriptionManager{}
 
 	authSvc := service.NewAuthService(userRepo, tokenStore, pwHasher, jwtMgr, cfg.RefreshTokenTTL)
+	guildSvc := service.NewGuildService(guildRepo, presenceStore, subMgr)
+	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, subMgr)
 
 	engine := router.New(router.Dependencies{
 		Config:           cfg,
@@ -71,6 +78,8 @@ func main() {
 		HealthController: controller.NewHealthController(pgHealth, redisHealth, log),
 		AuthController:   controller.NewAuthController(authSvc),
 		UserController:   controller.NewUserController(authSvc, middleware.GetUserID),
+		GuildController:  controller.NewGuildController(guildSvc, middleware.GetUserID),
+		InviteController: controller.NewInviteController(inviteSvc, middleware.GetUserID),
 	})
 
 	srv := &http.Server{

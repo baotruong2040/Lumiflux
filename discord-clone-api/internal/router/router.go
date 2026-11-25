@@ -20,6 +20,8 @@ type Dependencies struct {
 	HealthController *controller.HealthController
 	AuthController   *controller.AuthController
 	UserController   *controller.UserController
+	GuildController  *controller.GuildController
+	InviteController *controller.InviteController
 }
 
 // New constructs and configures the Gin engine with middlewares and v1 routes.
@@ -63,6 +65,29 @@ func New(deps Dependencies) *gin.Engine {
 	{
 		users.GET("/@me", deps.UserController.GetMe)
 		users.PATCH("/@me", deps.UserController.UpdateMe)
+	}
+
+	if deps.GuildController != nil {
+		guilds := v1.Group("/guilds", middleware.Auth(deps.TokenManager))
+		{
+			guilds.POST("", deps.GuildController.Create)
+			guilds.GET("", deps.GuildController.List)
+			guilds.GET("/:guildId", deps.GuildController.Get)
+			guilds.PATCH("/:guildId", deps.GuildController.Update)
+			guilds.DELETE("/:guildId", deps.GuildController.Delete)
+			guilds.GET("/:guildId/members", deps.GuildController.ListMembers)
+			guilds.DELETE("/:guildId/members/@me", deps.GuildController.Leave)
+			if deps.InviteController != nil {
+				guilds.POST("/:guildId/invites", deps.InviteController.Create)
+			}
+		}
+	}
+
+	if deps.InviteController != nil {
+		invites := v1.Group("/invites", middleware.Auth(deps.TokenManager))
+		{
+			invites.POST("/:code/accept", deps.InviteController.Accept)
+		}
 	}
 
 	return r

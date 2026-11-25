@@ -25,17 +25,17 @@
 - [x] **Ngày 6 (21/11/2026) — Xây dựng Authentication Backend**
   - *Mục tiêu:* Hoàn thiện `register`, `login` (kèm rate limit đăng nhập `429`), `refresh` (xoay vòng token trong Redis), `logout`, auth middleware, và `GET/PATCH /users/@me`.
   - *Bằng chứng:* Hoàn thiện toàn bộ luồng Auth theo `api/openapi.yaml`; unit test `AuthService` (kể cả concurrent refresh race) và `router` pass; integration test `TC-AUTH-01..06` (phần backend) chạy trên PostgreSQL + Redis thật đều pass với `go test -race ./...`.
-- [ ] **Ngày 7 (22/11/2026) — Xây dựng Authentication Frontend**
+- [x] **Ngày 7 (22/11/2026) — Xây dựng Authentication Frontend**
   - *Mục tiêu:* Màn hình Login/Register, `httpClient` tự động refresh token khi gặp `401`, Auth store, Route Guard và `StorageAdapter` dùng chung Web/Tauri.
-  - *Bằng chứng:* Đăng ký, đăng nhập, F5 giữ nguyên phiên trên cả trình duyệt và cửa sổ Tauri.
+  - *Bằng chứng:* Dựng `src/theme/tokens.css` (`discord-night`), `src/core/platform/` (`StorageAdapter`), `src/core/api/` (`httpClient` single-flight auto-refresh 401 + retry), `useAuthStore`, `ProtectedRoute`/`PublicOnlyRoute`, `LoginPage`/`RegisterPage`; `npm run lint` (0 cảnh báo) & `npm run build` (`tsc -b && vite build`) xanh; unit test `httpClient` + `StorageAdapter` (3/3 pass), kiểm thử `TC-AUTH-05` trực tiếp với API `:8080`, kiểm thử Web E2E (`http://localhost:5173`: đăng ký, F5 giữ phiên, `@me`, đăng xuất, đăng nhập) pass, và `cargo check` Tauri 2 shell xanh *(chạy tương tác cửa sổ GUI `npx tauri dev` gộp cùng kiểm xác nhận Ngày 3)*.
 
 ---
 
 ## Tuần 2: Chat REST, WebSocket Realtime, Tính năng Should & Đóng gói
 
-- [ ] **Ngày 8 (23/11/2026) — Xây dựng Guild & Invite Backend**
+- [x] **Ngày 8 (23/11/2026) — Xây dựng Guild & Invite Backend**
   - *Mục tiêu:* CRUD Guild (transaction tạo guild + `#general` + `owner`), danh sách thành viên, rời server (chặn `owner`), tạo và chấp nhận mã mời (`POST /invites/:code/accept`, mã mời hết hạn/hết lượt trả `400`); gán `admin` bằng SQL khi test.
-  - *Bằng chứng:* Kiểm thử phân quyền `owner` / `admin` / `member` và mã mời hết hạn/hết lượt.
+  - *Bằng chứng:* Hoàn thiện `GuildService`, `InviteService`, `GuildRepository`/`InviteRepository` (`pgx` transaction + `SELECT ... FOR UPDATE`), `PresenceStore` (`MGET`), interface/hook `GuildSubscriptionManager.Unsubscribe` (ADR-007), và controller/router; unit test + `router_test.go` + integration test thật trên PostgreSQL/Redis (`TC-GLD-01..04`) pass với `go test -race -count=1 ./...` & `go vet ./...`.
 - [ ] **Ngày 9 (24/11/2026) — Xây dựng Channel & Giao diện Server**
   - *Mục tiêu:* API CRUD Channel (`owner`/`admin`), dựng layout 3 cột Dark Mode (`ServerBar`, `ChannelSidebar`, `ChatArea`), luồng tạo/tham gia server và chọn kênh trên UI.
   - *Bằng chứng:* Đăng nhập, tạo server, tạo kênh và chuyển qua lại giữa các kênh trên giao diện.

@@ -1,0 +1,55 @@
+:root,
+[data-theme='discord-night'] {
+  color-scheme: dark;
+
+  /* Background surfaces */
+  --bg-primary: #313338;
+  --bg-secondary: #2b2d31;
+  --bg-secondary-alt: #232428;
+  --bg-tertiary: #1e1f22;
+  --bg-floating: #111214;
+  --bg-modifier-hover: rgba(78, 80, 88, 0.32);
+  --bg-modifier-active: rgba(78, 80, 88, 0.48);
+
+  /* Inputs & interactive surfaces */
+  --input-bg: #1e1f22;
+  --input-border: rgba(255, 255, 255, 0.08);
+  --input-border-focus: #5865f2;
+
+  /* Typography colors (WCAG AA >= 4.5:1 on --bg-primary / --bg-secondary) */
+  --text-primary: #f2f3f5;
+  --text-secondary: #c4c9ce;
+  --text-muted: #a3a8b0;
+  --text-link: #79b8ff;
+
+  /* Brand & semantic colors */
+  --brand-primary: #5865f2;
+  --brand-hover: #4752c4;
+  --brand-active: #3c45a5;
+  --brand-text: #ffffff;
+
+  --status-success: #23a559;
+  --status-success-bg: rgba(35, 165, 89, 0.16);
+  --status-warning: #f0b232;
+  --status-danger: #da373c;
+  --status-danger-hover: #a12828;
+  --status-danger-text: #ff8c90;
+  --status-danger-bg: rgba(218, 55, 60, 0.14);
+  --status-danger-border: rgba(218, 55, 60, 0.45);
+
+  /* Borders, radii, shadows */
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+  --shadow-elevation-high: 0 8px 24px rgba(0, 0, 0, 0.45);
+
+  /* Typography */
+  --font-sans: 'gg sans', 'Noto Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', Consolas, monospace;
+
+  /* Focus ring */
+  --focus-ring: 0 0 0 3px rgba(88, 101, 242, 0.45);
+}

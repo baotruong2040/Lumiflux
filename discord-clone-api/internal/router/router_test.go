@@ -156,6 +156,170 @@ func (l *memoryRateLimiter) Allow(_ context.Context, key string, limit int, wind
 	return true, 0, nil
 }
 
+type memoryGuildRepo struct {
+	mu      sync.RWMutex
+	guilds  map[uuid.UUID]domain.Guild
+	members map[uuid.UUID]map[uuid.UUID]domain.GuildMember
+	users   *memoryUserRepo
+}
+
+func newMemoryGuildRepo(users *memoryUserRepo) *memoryGuildRepo {
+	return &memoryGuildRepo{
+		guilds:  make(map[uuid.UUID]domain.Guild),
+		members: make(map[uuid.UUID]map[uuid.UUID]domain.GuildMember),
+		users:   users,
+	}
+}
+
+func (r *memoryGuildRepo) CreateWithDefaultChannel(_ context.Context, guild *domain.Guild, _ *domain.Channel, owner *domain.GuildMember) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now().UTC()
+	guild.CreatedAt = now
+	owner.JoinedAt = now
+	r.guilds[guild.ID] = *guild
+	r.members[guild.ID] = map[uuid.UUID]domain.GuildMember{owner.UserID: *owner}
+	return nil
+}
+
+func (r *memoryGuildRepo) ListByUser(_ context.Context, userID uuid.UUID) ([]domain.Guild, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]domain.Guild, 0)
+	for gid, mems := range r.members {
+		if _, ok := mems[userID]; ok {
+			out = append(out, r.guilds[gid])
+		}
+	}
+	return out, nil
+}
+
+func (r *memoryGuildRepo) GetByID(_ context.Context, guildID uuid.UUID) (*domain.Guild, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	g, ok := r.guilds[guildID]
+	if !ok {
+		return nil, domain.NewError(domain.ErrNotFound, "GUILD_NOT_FOUND", "guild not found")
+	}
+	cp := g
+	return &cp, nil
+}
+
+func (r *memoryGuildRepo) Update(_ context.Context, guildID uuid.UUID, params domain.UpdateGuildParams) (*domain.Guild, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	g, ok := r.guilds[guildID]
+	if !ok {
+		return nil, domain.NewError(domain.ErrNotFound, "GUILD_NOT_FOUND", "guild not found")
+	}
+	if params.Name != nil {
+		g.Name = *params.Name
+	}
+	if params.IconURLSet {
+		g.IconURL = params.IconURL
+	}
+	r.guilds[guildID] = g
+	cp := g
+	return &cp, nil
+}
+
+func (r *memoryGuildRepo) Delete(_ context.Context, guildID uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.guilds[guildID]; !ok {
+		return domain.NewError(domain.ErrNotFound, "GUILD_NOT_FOUND", "guild not found")
+	}
+	delete(r.guilds, guildID)
+	delete(r.members, guildID)
+	return nil
+}
+
+func (r *memoryGuildRepo) GetMember(_ context.Context, guildID, userID uuid.UUID) (*domain.GuildMember, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m, ok := r.members[guildID][userID]
+	if !ok {
+		return nil, domain.NewError(domain.ErrNotFound, "MEMBER_NOT_FOUND", "member not found")
+	}
+	cp := m
+	return &cp, nil
+}
+
+func (r *memoryGuildRepo) ListMembers(ctx context.Context, guildID uuid.UUID) ([]domain.GuildMember, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]domain.GuildMember, 0, len(r.members[guildID]))
+	for _, m := range r.members[guildID] {
+		if u, err := r.users.GetByID(ctx, m.UserID); err == nil {
+			m.User = *u
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func (r *memoryGuildRepo) RemoveMember(_ context.Context, guildID, userID uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.members[guildID][userID]; !ok {
+		return domain.NewError(domain.ErrNotFound, "MEMBER_NOT_FOUND", "member not found")
+	}
+	delete(r.members[guildID], userID)
+	return nil
+}
+
+type memoryInviteRepo struct {
+	mu      sync.Mutex
+	guilds  *memoryGuildRepo
+	invites map[string]domain.Invite
+}
+
+func newMemoryInviteRepo(guilds *memoryGuildRepo) *memoryInviteRepo {
+	return &memoryInviteRepo{guilds: guilds, invites: make(map[string]domain.Invite)}
+}
+
+func (r *memoryInviteRepo) Create(_ context.Context, inv *domain.Invite) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.invites[inv.Code]; ok {
+		return domain.NewError(domain.ErrConflict, "INVITE_CODE_CONFLICT", "invite code already exists")
+	}
+	inv.CreatedAt = time.Now().UTC()
+	r.invites[inv.Code] = *inv
+	return nil
+}
+
+func (r *memoryInviteRepo) Accept(ctx context.Context, code string, userID uuid.UUID, now time.Time) (*domain.Guild, *domain.GuildMember, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	inv, ok := r.invites[code]
+	if !ok {
+		return nil, nil, domain.NewError(domain.ErrNotFound, "INVITE_NOT_FOUND", "invite code not found")
+	}
+	if inv.ExpiresAt != nil && !inv.ExpiresAt.After(now) {
+		return nil, nil, domain.NewError(domain.ErrValidation, "INVITE_EXPIRED", "invite code has expired")
+	}
+	if inv.MaxUses != nil && inv.Uses >= *inv.MaxUses {
+		return nil, nil, domain.NewError(domain.ErrValidation, "INVITE_EXHAUSTED", "invite code has reached its maximum uses")
+	}
+
+	r.guilds.mu.Lock()
+	defer r.guilds.mu.Unlock()
+	if _, already := r.guilds.members[inv.GuildID][userID]; already {
+		return nil, nil, domain.NewError(domain.ErrConflict, "ALREADY_MEMBER", "you are already a member of this guild")
+	}
+	inv.Uses++
+	r.invites[code] = inv
+	u, err := r.guilds.users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	member := domain.GuildMember{GuildID: inv.GuildID, UserID: userID, Role: domain.RoleMember, JoinedAt: now, User: *u}
+	r.guilds.members[inv.GuildID][userID] = member
+	g := r.guilds.guilds[inv.GuildID]
+	return &g, &member, nil
+}
+
 func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 	cfg := &config.Config{
 		AppEnv:             "test",
@@ -172,13 +336,19 @@ func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 
 	log := logger.NewWithWriter(io.Discard, "error")
 	jwtMgr := jwtutil.NewManager(cfg.JWTSecret, cfg.AccessTokenTTL)
+	userRepo := newMemoryUserRepo()
+	guildRepo := newMemoryGuildRepo(userRepo)
+	inviteRepo := newMemoryInviteRepo(guildRepo)
+
 	authSvc := service.NewAuthService(
-		newMemoryUserRepo(),
+		userRepo,
 		newMemoryTokenStore(),
 		hasher.NewBcryptHasher(cfg.BcryptCost),
 		jwtMgr,
 		cfg.RefreshTokenTTL,
 	)
+	guildSvc := service.NewGuildService(guildRepo, nil, domain.NoopGuildSubscriptionManager{})
+	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, domain.NoopGuildSubscriptionManager{})
 
 	r := New(Dependencies{
 		Config:           cfg,
@@ -188,6 +358,8 @@ func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 		HealthController: controller.NewHealthController(&stubHealthChecker{err: pgErr}, &stubHealthChecker{err: redisErr}, log),
 		AuthController:   controller.NewAuthController(authSvc),
 		UserController:   controller.NewUserController(authSvc, middleware.GetUserID),
+		GuildController:  controller.NewGuildController(guildSvc, middleware.GetUserID),
+		InviteController: controller.NewInviteController(inviteSvc, middleware.GetUserID),
 	})
 
 	return r, jwtMgr
@@ -353,4 +525,64 @@ func TestRouter_AuthFlowAndRateLimit(t *testing.T) {
 	var rlErr controller.ErrorResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rlErr))
 	assert.Equal(t, "RATE_LIMITED", rlErr.Error.Code)
+}
+
+func TestRouter_GuildAndInviteRoutes(t *testing.T) {
+	r, _ := newTestRouter(nil, nil)
+
+	// Register owner and second user
+	rec := doJSONRequest(t, r, http.MethodPost, "/api/v1/auth/register", dto.RegisterRequest{
+		Username:    "g_owner",
+		Email:       "g_owner@example.com",
+		DisplayName: "Guild Owner",
+		Password:    "Password123!",
+	}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var ownerAuth dto.AuthResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ownerAuth))
+
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/auth/register", dto.RegisterRequest{
+		Username:    "g_member",
+		Email:       "g_member@example.com",
+		DisplayName: "Guild Member",
+		Password:    "Password123!",
+	}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var memberAuth dto.AuthResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &memberAuth))
+
+	ownerHdr := map[string]string{"Authorization": "Bearer " + ownerAuth.AccessToken}
+	memberHdr := map[string]string{"Authorization": "Bearer " + memberAuth.AccessToken}
+
+	// Unauthenticated / invalid UUID checks
+	assert.Equal(t, http.StatusUnauthorized, doJSONRequest(t, r, http.MethodGet, "/api/v1/guilds", nil, nil).Code)
+	assert.Equal(t, http.StatusBadRequest, doJSONRequest(t, r, http.MethodGet, "/api/v1/guilds/not-a-uuid", nil, ownerHdr).Code)
+
+	// Create guild
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/guilds", dto.CreateGuildRequest{Name: "Router Guild"}, ownerHdr)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var guild dto.GuildResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &guild))
+
+	// Create invite (empty body) & accept
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/guilds/"+guild.ID.String()+"/invites", nil, ownerHdr)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var inv dto.InviteResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &inv))
+
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/invites/"+inv.Code+"/accept", nil, memberHdr)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	// Members list & leave rules
+	rec = doJSONRequest(t, r, http.MethodGet, "/api/v1/guilds/"+guild.ID.String()+"/members", nil, memberHdr)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var members []dto.GuildMemberResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &members))
+	assert.Len(t, members, 2)
+
+	assert.Equal(t, http.StatusForbidden, doJSONRequest(t, r, http.MethodDelete, "/api/v1/guilds/"+guild.ID.String()+"/members/@me", nil, ownerHdr).Code)
+	assert.Equal(t, http.StatusNoContent, doJSONRequest(t, r, http.MethodDelete, "/api/v1/guilds/"+guild.ID.String()+"/members/@me", nil, memberHdr).Code)
+
+	// Owner delete guild
+	assert.Equal(t, http.StatusNoContent, doJSONRequest(t, r, http.MethodDelete, "/api/v1/guilds/"+guild.ID.String(), nil, ownerHdr).Code)
 }
