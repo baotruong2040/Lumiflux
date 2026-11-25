@@ -21,13 +21,31 @@ func TestLoad_DefaultsAndEnvOverrides(t *testing.T) {
 
 	cfg, err := Load()
 	require.NoError(t, err)
-	assert.Equal(t, ":9090", cfg.Addr())
+	assert.Equal(t, "127.0.0.1:9090", cfg.Addr())
 	assert.Equal(t, 20*time.Minute, cfg.AccessTokenTTL)
 	assert.Equal(t, 7*24*time.Hour, cfg.RefreshTokenTTL)
 	assert.Equal(t, 10, cfg.BcryptCost)
 	assert.Equal(t, 10, cfg.LoginRateLimit)
 	assert.Equal(t, time.Minute, cfg.LoginRateWindow)
 	assert.Equal(t, []string{"http://localhost:5173", "tauri://localhost"}, cfg.CORSAllowedOrigins)
+}
+
+func TestLoad_HostBindingByEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	t.Setenv("HOST", "0.0.0.0")
+	t.Setenv("PORT", "8080")
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "0.0.0.0:8080", cfg.Addr())
+
+	t.Setenv("HOST", "")
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("JWT_SECRET", "production-secret-key-at-least-32-characters")
+	prodCfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, ":8080", prodCfg.Addr())
 }
 
 func TestLoad_ReadsDotEnvWithoutOverridingOS(t *testing.T) {

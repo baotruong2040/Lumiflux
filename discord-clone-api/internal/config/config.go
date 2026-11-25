@@ -17,6 +17,7 @@ const defaultDevJWTSecret = "dev-only-jwt-secret-key-change-in-production-32b"
 // Config holds all runtime configuration for the API server.
 type Config struct {
 	AppEnv             string
+	Host               string
 	Port               string
 	LogLevel           string
 	DatabaseURL        string
@@ -33,12 +34,14 @@ type Config struct {
 	ShutdownTimeout    time.Duration
 }
 
-// Addr returns the HTTP listen address formatted as ":port".
+// Addr returns the HTTP listen address formatted as "host:port" (or ":port" when Host is empty).
 func (c *Config) Addr() string {
-	if strings.HasPrefix(c.Port, ":") {
-		return c.Port
+	port := strings.TrimPrefix(strings.TrimSpace(c.Port), ":")
+	host := strings.TrimSpace(c.Host)
+	if host == "" {
+		return ":" + port
 	}
-	return ":" + c.Port
+	return host + ":" + port
 }
 
 // Load reads optional .env files (without overriding existing OS env vars)
@@ -77,8 +80,15 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	appEnv := getEnvString("APP_ENV", "development")
+	defaultHost := "127.0.0.1"
+	if strings.EqualFold(appEnv, "production") {
+		defaultHost = ""
+	}
+
 	cfg := &Config{
-		AppEnv:             getEnvString("APP_ENV", "development"),
+		AppEnv:             appEnv,
+		Host:               getEnvString("HOST", defaultHost),
 		Port:               getEnvString("PORT", "8080"),
 		LogLevel:           getEnvString("LOG_LEVEL", "info"),
 		DatabaseURL:        getEnvString("DATABASE_URL", "postgres://discord:discord_secret_dev@localhost:5432/discord_clone?sslmode=disable"),
@@ -89,7 +99,7 @@ func Load() (*Config, error) {
 		AccessTokenTTL:     accessTTL,
 		RefreshTokenTTL:    refreshTTL,
 		BcryptCost:         bcryptCost,
-		CORSAllowedOrigins: getEnvCSV("CORS_ALLOWED_ORIGINS", []string{"http://localhost:5173", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"}),
+		CORSAllowedOrigins: getEnvCSV("CORS_ALLOWED_ORIGINS", []string{"http://localhost:5173", "http://127.0.0.1:5173", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"}),
 		LoginRateLimit:     loginRateLimit,
 		LoginRateWindow:    loginRateWindow,
 		ShutdownTimeout:    shutdownTimeout,

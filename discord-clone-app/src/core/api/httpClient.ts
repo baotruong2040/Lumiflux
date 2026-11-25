@@ -33,7 +33,7 @@ export interface HttpClient {
 }
 
 const DEFAULT_BASE_URL =
-  (import.meta.env?.VITE_API_URL as string | undefined) || 'http://localhost:8080'
+  (import.meta.env?.VITE_API_URL as string | undefined) || 'http://127.0.0.1:8080'
 
 function trimTrailingSlash(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url

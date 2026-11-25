@@ -439,6 +439,7 @@ Xóa kênh khỏi server, chỉ `owner` hoặc `admin`.
 | Biến | Mặc định (Dev) | Mô tả |
 | :--- | :--- | :--- |
 | `APP_ENV` | `development` | Môi trường (`development`, `test`, `production`). |
+| `HOST` | `127.0.0.1` *(dev)* / *(rỗng trong production)* | Địa chỉ bind HTTP. Mặc định `127.0.0.1` khi dev trên Windows để tránh cảnh báo Windows Firewall; đặt `0.0.0.0` hoặc rỗng khi deploy container. |
 | `PORT` | `8080` | Cổng lắng nghe HTTP. |
 | `LOG_LEVEL` | `info` | Mức log `slog` (`debug`, `info`, `warn`, `error`). |
 | `DATABASE_URL` | `postgres://discord:discord_secret_dev@localhost:5432/discord_clone?sslmode=disable` | Chuỗi kết nối PostgreSQL (`pgxpool`). |
@@ -449,7 +450,7 @@ Xóa kênh khỏi server, chỉ `owner` hoặc `admin`.
 | `JWT_ACCESS_TTL` | `15m` | Thời hạn Access Token. |
 | `JWT_REFRESH_TTL` | `168h` | Thời hạn Refresh Token (7 ngày). |
 | `BCRYPT_COST` | `10` | Chi phí băm `bcrypt`. |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,tauri://localhost,http://tauri.localhost,https://tauri.localhost` | Danh sách origin cho phép, ngăn cách bằng dấu phẩy. |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173,tauri://localhost,http://tauri.localhost,https://tauri.localhost` | Danh sách origin cho phép, ngăn cách bằng dấu phẩy. |
 | `LOGIN_RATE_LIMIT` | `10` | Số lần đăng nhập tối đa trong mỗi cửa sổ/IP. |
 | `LOGIN_RATE_WINDOW` | `1m` | Độ dài cửa sổ rate limit đăng nhập. |
 | `SHUTDOWN_TIMEOUT` | `10s` | Thời gian tối đa chờ graceful shutdown. |
