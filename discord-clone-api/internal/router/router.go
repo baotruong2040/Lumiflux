@@ -22,8 +22,10 @@ type Dependencies struct {
 	UserController    *controller.UserController
 	GuildController   *controller.GuildController
 	InviteController  *controller.InviteController
-	ChannelController *controller.ChannelController
-	MessageController *controller.MessageController
+	ChannelController  *controller.ChannelController
+	MessageController  *controller.MessageController
+	WSTicketController *controller.WSTicketController
+	WSHandler          gin.HandlerFunc
 }
 
 // New constructs and configures the Gin engine with middlewares and v1 routes.
@@ -49,6 +51,9 @@ func New(deps Dependencies) *gin.Engine {
 
 	r.GET("/healthz", deps.HealthController.Healthz)
 	r.GET("/readyz", deps.HealthController.Readyz)
+	if deps.WSHandler != nil {
+		r.GET("/ws", deps.WSHandler)
+	}
 
 	v1 := r.Group("/api/v1")
 	auth := v1.Group("/auth")
@@ -67,6 +72,13 @@ func New(deps Dependencies) *gin.Engine {
 	{
 		users.GET("/@me", deps.UserController.GetMe)
 		users.PATCH("/@me", deps.UserController.UpdateMe)
+	}
+
+	if deps.WSTicketController != nil {
+		ws := v1.Group("/ws", middleware.Auth(deps.TokenManager))
+		{
+			ws.POST("/ticket", deps.WSTicketController.Create)
+		}
 	}
 
 	if deps.GuildController != nil {

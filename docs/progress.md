@@ -2,7 +2,7 @@
 
 - **Khung thời gian triển khai:** 16/11/2026 – 29/11/2026 (14 ngày)
 - **Cập nhật lần cuối:** 25/11/2026
-- **Trạng thái tổng thể:** Đã hoàn thành Ngày 1, Ngày 2, Ngày 4, Ngày 5, Ngày 6, Ngày 7, Ngày 8, Ngày 9, Ngày 10 (Message Backend & Cursor Pagination) và Ngày 11 (Chat UI REST, Optimistic Update & 1.000-message Pagination); còn bước xác nhận tương tác trực tiếp trên cửa sổ Desktop GUI Ngày 3 và chuyển sang Ngày 12 (WebSocket Hub).
+- **Trạng thái tổng thể:** Đã hoàn thành Ngày 1, Ngày 2, Ngày 4, Ngày 5, Ngày 6, Ngày 7, Ngày 8, Ngày 9, Ngày 10, Ngày 11 và Ngày 12 (WebSocket Ticket Auth, Hub Actor & Client Gateway); còn bước xác nhận tương tác trực tiếp trên cửa sổ Desktop GUI Ngày 3 và chuyển sang Ngày 13 (Redis Pub/Sub & `GatewayClient` Realtime).
 
 ---
 
@@ -21,7 +21,7 @@
 | **Ngày 9** | Channel Backend & Giao diện Main Layout (Server/Channel) | **Hoàn thành** | Hoàn thiện `ChannelService`, `ChannelController`, `ChannelRepository` (`403` member, `409` trùng tên); dựng layout 3 cột Dark Mode + đầy đủ modal Server/Invite/Channel; `TC-CHN-01..02` + `go test -race ./...` + `npm run lint` (`0 warnings`) + `npm run build` + Web E2E 2 tài khoản + `npx tauri dev` launch pass. |
 | **Ngày 10** | Message Backend & Cursor Pagination theo UUIDv7 | **Hoàn thành** | Hoàn thiện `MessageRepository`, `MessageService` (rate limit `rl:{userID}:msg` `30/10s`, `nonce`, cursor pagination, RBAC sửa/xóa mềm), `MessageController`, `cmd/seed`; `TC-MSG-01..04`, `TC-GLD-06` + `go test -race ./...` xanh. |
 | **Ngày 11** | Chat UI & Optimistic Update (`nonce`) | **Hoàn thành** | Hoàn thiện `messageApi`, `useChannelMessages`, `MessageList`, `MessageComposer`; `npm run lint` (`0 warnings`), `npm run build`, `cargo check` xanh; Web E2E trên 1.000 tin nhắn seed pass (`TC-MSG-02`, `TC-UI-01..02`, sửa/xóa & F5). |
-| **Ngày 12** | WebSocket Gateway Backend (`Hub`, `Client`, `Ticket` dùng 1 lần) | **Kế hoạch** | Chưa bắt đầu. |
+| **Ngày 12** | WebSocket Gateway Backend (`Hub`, `Client`, `Ticket` dùng 1 lần) | **Hoàn thành** | Hoàn thiện `POST /api/v1/ws/ticket` (`GETDEL` TTL `30s`), `GET /ws?ticket=...`, `Hub` actor (`Subscribe`/`Unsubscribe`, shutdown `1001`), `Client` (`readPump`/`writePump`, `4002`); `TC-HUB-01..05`, `goleak`, `TC-WS-01`, `BenchmarkFanout` & `go test -race ./...` xanh. |
 | **Ngày 13** | Kết nối Redis Pub/Sub & Frontend Realtime (`GatewayClient`, `RESYNC`) | **Kế hoạch** | Chưa bắt đầu. |
 | **Ngày 14** | Hoàn thiện nhóm `Should`, kiểm thử toàn luồng, đóng gói & tài liệu hóa | **Kế hoạch** | Chưa bắt đầu. |
 
@@ -85,7 +85,16 @@
   - Unit test helper (`message_ui_test.ts`): `2/2` pass (`flattenPagesChronologically` và optimistic cache transforms).
   - Web Browser E2E (`http://127.0.0.1:5173/`): seed 1.000 tin nhắn qua `cmd/seed`, cuộn lên tải 4 trang cũ (`#1000` xuống `#0751`) không trùng/sót và giữ vị trí cuộn, gửi tin tiếng Việt có dấu + F5 giữ nguyên, gửi chuỗi 2.000 ký tự `'A'` không tràn layout (`fitsInsideContainerWidth: true`), sửa hiện `(đã chỉnh sửa)` & xóa mềm biến mất cả sau F5, 0 lỗi console/CORS.
 
+### Mốc Ngày 12 — WebSocket Ticket Auth & Actor Hub Gateway (25/11/2026)
+- **Backend (`discord-clone-api/`):**
+  - Bổ sung `github.com/gorilla/websocket v1.5.3` và `go.uber.org/goleak v1.3.0`.
+  - Bổ sung `domain.TicketStore`, `redisstore.TicketStore` (`SET` 30s + `GETDEL`), `service.TicketService`, `controller.WSTicketController` (`POST /api/v1/ws/ticket`), và package `internal/gateway` (`protocol.go`, `client.go`, `hub.go`, `handler.go`) với `Hub` actor đơn goroutine (nối `Subscribe`/`Unsubscribe` vào `GuildService` và `InviteService` tại `cmd/api/main.go`).
+  - `go vet ./...` và `go test -race -count=1 ./...` pass toàn bộ package (`config`, `gateway`, `integration`, `router`, `service`, `pkg/*`).
+  - `go test -v -race -count=1 ./internal/gateway/...`: **7/7 test pass** với `goleak.VerifyTestMain` & `goleak.VerifyNone` sạch (`TestHandler_TicketAuthAndOriginCheck`, `TestHub_ReadyHeartbeatAndDynamicSubscriptions`, `TC-HUB-01` `4002`, `TC-HUB-02`, `TC-HUB-03`, `TC-HUB-04` `1001`, `TC-HUB-05` `pprof` goroutine baseline).
+  - `BenchmarkFanout`: `clients_1000` đạt `124688 ns/op`, `6 B/op`, `0 allocs/op`; `clients_10000` đạt `1867519 ns/op`, `2 B/op`, `0 allocs/op`.
+  - Integration test thật (`RUN_INTEGRATION_TESTS=1 go test -v -race -count=1 ./internal/integration/...`): **18/18 pass**, bao gồm `TC-WS-01` (ticket TTL ≤ 30s trên Redis, upgrade `/ws` nhận `READY` + `HEARTBEAT_ACK`, dùng lại vé bị từ chối `401`).
+
 ---
 
 ## 3. Việc cần làm tiếp theo
-Bắt đầu **Ngày 12**: Xây dựng **WebSocket Backend** (`POST /api/v1/ws/ticket` với Redis `GETDEL`, `Hub` actor model, `Client` `readPump`/`writePump`, `READY`, `HEARTBEAT`/`HEARTBEAT_ACK`, slow consumer `4002`, kiểm tra `goleak` và `TC-HUB-01..04`).
+Bắt đầu **Ngày 13**: Nối **Redis Pub/Sub** (`MESSAGE_CREATE`/`MESSAGE_UPDATE`/`MESSAGE_DELETE`, `CHANNEL_*`, `GUILD_*`) vào `Hub` và xây dựng **Frontend Realtime (`GatewayClient.ts`)** (auto-reconnect backoff + jitter, `RESYNC` invalidate TanStack Query cache).

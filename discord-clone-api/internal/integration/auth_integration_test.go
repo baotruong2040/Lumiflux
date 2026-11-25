@@ -24,6 +24,7 @@ import (
 	"github.com/truong/discord-clone-api/internal/controller"
 	"github.com/truong/discord-clone-api/internal/controller/dto"
 	"github.com/truong/discord-clone-api/internal/domain"
+	"github.com/truong/discord-clone-api/internal/gateway"
 	"github.com/truong/discord-clone-api/internal/repository/postgres"
 	"github.com/truong/discord-clone-api/internal/repository/redisstore"
 	"github.com/truong/discord-clone-api/internal/router"
@@ -103,7 +104,15 @@ func setupIntegrationEnv(t *testing.T) *testEnv {
 	messageRepo := postgres.NewMessageRepository(pool)
 	inviteRepo := postgres.NewInviteRepository(pool)
 	rateLimiter := redisstore.NewRateLimiter(redisClient)
+	ticketStore := redisstore.NewTicketStore(redisClient)
 	subs := &recordingSubManager{}
+	hubCtx, hubCancel := context.WithCancel(context.Background())
+	hub := gateway.NewHub(cfg.WSHeartbeatInterval, log)
+	hubDone := make(chan struct{})
+	go func() {
+		defer close(hubDone)
+		hub.Run(hubCtx)
+	}()
 
 	authSvc := service.NewAuthService(
 		userRepo,
@@ -124,19 +133,23 @@ func setupIntegrationEnv(t *testing.T) *testEnv {
 		cfg.MessageRateLimit,
 		cfg.MessageRateWindow,
 	)
+	ticketSvc := service.NewTicketService(ticketStore, cfg.WSTicketTTL)
+	wsHandler := gateway.NewHandler(hub, ticketSvc, guildRepo, cfg.CORSAllowedOrigins, log)
 
 	engine := router.New(router.Dependencies{
-		Config:            cfg,
-		Logger:            log,
-		TokenManager:      jwtMgr,
-		RateLimiter:       rateLimiter,
-		HealthController:  controller.NewHealthController(postgres.NewHealthChecker(pool), redisstore.NewHealthChecker(redisClient), log),
-		AuthController:    controller.NewAuthController(authSvc),
-		UserController:    controller.NewUserController(authSvc, middleware.GetUserID),
-		GuildController:   controller.NewGuildController(guildSvc, middleware.GetUserID),
-		InviteController:  controller.NewInviteController(inviteSvc, middleware.GetUserID),
-		ChannelController: controller.NewChannelController(channelSvc, middleware.GetUserID),
-		MessageController: controller.NewMessageController(messageSvc, middleware.GetUserID),
+		Config:             cfg,
+		Logger:             log,
+		TokenManager:       jwtMgr,
+		RateLimiter:        rateLimiter,
+		HealthController:   controller.NewHealthController(postgres.NewHealthChecker(pool), redisstore.NewHealthChecker(redisClient), log),
+		AuthController:     controller.NewAuthController(authSvc),
+		UserController:     controller.NewUserController(authSvc, middleware.GetUserID),
+		GuildController:    controller.NewGuildController(guildSvc, middleware.GetUserID),
+		InviteController:   controller.NewInviteController(inviteSvc, middleware.GetUserID),
+		ChannelController:  controller.NewChannelController(channelSvc, middleware.GetUserID),
+		MessageController:  controller.NewMessageController(messageSvc, middleware.GetUserID),
+		WSTicketController: controller.NewWSTicketController(ticketSvc, middleware.GetUserID),
+		WSHandler:          wsHandler.ServeGin,
 	})
 
 	env := &testEnv{
@@ -149,6 +162,8 @@ func setupIntegrationEnv(t *testing.T) *testEnv {
 	}
 
 	t.Cleanup(func() {
+		hubCancel()
+		<-hubDone
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		for _, gid := range env.createdGuildIDs {

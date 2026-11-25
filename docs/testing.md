@@ -53,7 +53,7 @@
 ### 2.4. WebSocket Realtime, Resync & Presence
 | Mã TC | Kịch bản kiểm thử | Kết quả kỳ vọng | Trạng thái |
 | :--- | :--- | :--- | :--- |
-| `TC-WS-01` | Dùng lại vé `ticket` đã kết nối trước đó | Bị từ chối `401 Unauthorized` (do Redis `GETDEL`). | `[ ]` |
+| `TC-WS-01` | Dùng lại vé `ticket` đã kết nối trước đó | Bị từ chối `401 Unauthorized` (do Redis `GETDEL`). | `[x]` |
 | `TC-WS-02` | Client A gửi liên tiếp 20 tin nhắn | Client A thay thế tin tạm bằng tin thật qua `nonce` (không hiện 40 tin); Client B nhận đủ 20 tin đúng thứ tự. | `[ ]` |
 | `TC-WS-03` | Ngắt mạng Client B 10 giây, Client A gửi 5 tin, sau đó nối lại mạng Client B | Client B tự động reconnect, lấy ticket mới, kích hoạt `RESYNC` và hiển thị đủ 5 tin bị lỡ. | `[ ]` |
 | `TC-WS-04` | Client A gõ phím trong ô chat | Client B thấy chỉ báo "... đang nhập" và tự tắt sau ~3 giây. | `[ ]` |
@@ -72,11 +72,11 @@
 ### 2.6. Hub & Client (`go test -race`)
 | Mã TC | Kịch bản kiểm thử | Kết quả kỳ vọng | Trạng thái |
 | :--- | :--- | :--- | :--- |
-| `TC-HUB-01` | Một client không đọc, hàng đợi `send` (256) đầy | Hub ngắt client đó bằng mã `4002`; các client khác vẫn nhận đủ frame. | `[ ]` |
-| `TC-HUB-02` | Client đóng đột ngột giữa lúc Hub đang fan-out | Hub gỡ client khỏi cả 3 map; `goleak.VerifyNone` sạch. | `[ ]` |
-| `TC-HUB-03` | `Unregister` gọi hai lần cho một client | Không panic, không lỗi. | `[ ]` |
-| `TC-HUB-04` | Hủy `ctx` của `Hub.Run` | Mọi kết nối đóng bằng `1001`, `Run` thoát, không rò rỉ goroutine. | `[ ]` |
-| `TC-HUB-05` | `BenchmarkFanout` với 1.000 và 10.000 client giả, rồi ngắt hết client | Ghi `ns/op`, `B/op`; số goroutine về mức nền (pprof). | `[ ]` |
+| `TC-HUB-01` | Một client không đọc, hàng đợi `send` (256) đầy | Hub ngắt client đó bằng mã `4002`; các client khác vẫn nhận đủ frame. | `[x]` |
+| `TC-HUB-02` | Client đóng đột ngột giữa lúc Hub đang fan-out | Hub gỡ client khỏi cả 3 map; `goleak.VerifyNone` sạch. | `[x]` |
+| `TC-HUB-03` | `Unregister` gọi hai lần cho một client | Không panic, không lỗi. | `[x]` |
+| `TC-HUB-04` | Hủy `ctx` của `Hub.Run` | Mọi kết nối đóng bằng `1001`, `Run` thoát, không rò rỉ goroutine. | `[x]` |
+| `TC-HUB-05` | `BenchmarkFanout` với 1.000 và 10.000 client giả, rồi ngắt hết client | Ghi `ns/op`, `B/op`; số goroutine về mức nền (pprof). (`clients_1000`: `124688 ns/op`, `6 B/op`, `0 allocs/op`; `clients_10000`: `1867519 ns/op`, `2 B/op`, `0 allocs/op`) | `[x]` |
 
 ---
 

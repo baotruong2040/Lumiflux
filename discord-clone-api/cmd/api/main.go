@@ -12,6 +12,7 @@ import (
 	"github.com/truong/discord-clone-api/internal/config"
 	"github.com/truong/discord-clone-api/internal/controller"
 	"github.com/truong/discord-clone-api/internal/domain"
+	"github.com/truong/discord-clone-api/internal/gateway"
 	"github.com/truong/discord-clone-api/internal/repository/postgres"
 	"github.com/truong/discord-clone-api/internal/repository/redisstore"
 	"github.com/truong/discord-clone-api/internal/router"
@@ -59,6 +60,7 @@ func main() {
 	messageRepo := postgres.NewMessageRepository(pgPool)
 	inviteRepo := postgres.NewInviteRepository(pgPool)
 	tokenStore := redisstore.NewTokenStore(redisClient)
+	ticketStore := redisstore.NewTicketStore(redisClient)
 	presenceStore := redisstore.NewPresenceStore(redisClient)
 	rateLimiter := redisstore.NewRateLimiter(redisClient)
 	pgHealth := postgres.NewHealthChecker(pgPool)
@@ -66,12 +68,17 @@ func main() {
 
 	pwHasher := hasher.NewBcryptHasher(cfg.BcryptCost)
 	jwtMgr := jwtutil.NewManager(cfg.JWTSecret, cfg.AccessTokenTTL)
-	subMgr := domain.NoopGuildSubscriptionManager{}
+	hub := gateway.NewHub(cfg.WSHeartbeatInterval, log)
+	hubDone := make(chan struct{})
+	go func() {
+		defer close(hubDone)
+		hub.Run(ctx)
+	}()
 	msgPublisher := domain.NoopMessageEventPublisher{}
 
 	authSvc := service.NewAuthService(userRepo, tokenStore, pwHasher, jwtMgr, cfg.RefreshTokenTTL)
-	guildSvc := service.NewGuildService(guildRepo, presenceStore, subMgr)
-	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, subMgr)
+	guildSvc := service.NewGuildService(guildRepo, presenceStore, hub)
+	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, hub)
 	channelSvc := service.NewChannelService(guildRepo, channelRepo)
 	messageSvc := service.NewMessageService(
 		guildRepo,
@@ -82,19 +89,23 @@ func main() {
 		cfg.MessageRateLimit,
 		cfg.MessageRateWindow,
 	)
+	ticketSvc := service.NewTicketService(ticketStore, cfg.WSTicketTTL)
+	wsHandler := gateway.NewHandler(hub, ticketSvc, guildRepo, cfg.CORSAllowedOrigins, log)
 
 	engine := router.New(router.Dependencies{
-		Config:            cfg,
-		Logger:            log,
-		TokenManager:      jwtMgr,
-		RateLimiter:       rateLimiter,
-		HealthController:  controller.NewHealthController(pgHealth, redisHealth, log),
-		AuthController:    controller.NewAuthController(authSvc),
-		UserController:    controller.NewUserController(authSvc, middleware.GetUserID),
-		GuildController:   controller.NewGuildController(guildSvc, middleware.GetUserID),
-		InviteController:  controller.NewInviteController(inviteSvc, middleware.GetUserID),
-		ChannelController: controller.NewChannelController(channelSvc, middleware.GetUserID),
-		MessageController: controller.NewMessageController(messageSvc, middleware.GetUserID),
+		Config:             cfg,
+		Logger:             log,
+		TokenManager:       jwtMgr,
+		RateLimiter:        rateLimiter,
+		HealthController:   controller.NewHealthController(pgHealth, redisHealth, log),
+		AuthController:     controller.NewAuthController(authSvc),
+		UserController:     controller.NewUserController(authSvc, middleware.GetUserID),
+		GuildController:    controller.NewGuildController(guildSvc, middleware.GetUserID),
+		InviteController:   controller.NewInviteController(inviteSvc, middleware.GetUserID),
+		ChannelController:  controller.NewChannelController(channelSvc, middleware.GetUserID),
+		MessageController:  controller.NewMessageController(messageSvc, middleware.GetUserID),
+		WSTicketController: controller.NewWSTicketController(ticketSvc, middleware.GetUserID),
+		WSHandler:          wsHandler.ServeGin,
 	})
 
 	srv := &http.Server{
@@ -120,6 +131,8 @@ func main() {
 	case <-ctx.Done():
 		log.Info("shutdown signal received")
 	case serveErr := <-errCh:
+		stop()
+		<-hubDone
 		if serveErr != nil {
 			log.Error("http server error", "err", serveErr)
 			os.Exit(1)
@@ -133,6 +146,11 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error("graceful shutdown failed", "err", err)
 		os.Exit(1)
+	}
+	select {
+	case <-hubDone:
+	case <-shutdownCtx.Done():
+		log.Warn("timed out waiting for websocket hub shutdown")
 	}
 	log.Info("api server stopped cleanly")
 }

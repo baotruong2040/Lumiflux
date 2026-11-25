@@ -502,7 +502,34 @@ Xóa mềm tin nhắn (`deleted_at = now()`); cho phép **tác giả** hoặc **
 
 ---
 
-## 8. Biến môi trường cấu hình (`internal/config`)
+## 8. WebSocket Ticket & Gateway (`/ws`)
+
+### 8.1. `POST /api/v1/ws/ticket`
+Cấp vé dùng một lần để nâng cấp kết nối WebSocket (ADR-004). Yêu cầu header `Authorization: Bearer <accessToken>`. Server lưu khóa `wsticket:{ticket}` trên Redis với TTL mặc định **30 giây** (`WS_TICKET_TTL`).
+
+**Response `200 OK`:**
+```json
+{
+  "ticket": "2pG9c4kM..."
+}
+```
+
+**Lỗi có thể trả về:** `401 UNAUTHORIZED`.
+
+### 8.2. `GET /ws?ticket=<ticket>`
+Nâng cấp kết nối lên WebSocket sau khi:
+1. Kiểm tra `Origin` nằm trong `CORS_ALLOWED_ORIGINS` (`http://localhost:5173`, `http://127.0.0.1:5173`, `tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`; không cho phép origin lạ -> `403 FORBIDDEN`; cho phép client không gửi `Origin`).
+2. Tiêu thụ vé nguyên tử bằng lệnh Redis `GETDEL wsticket:{ticket}` -> trả `401 UNAUTHORIZED` (`INVALID_TICKET`) nếu thiếu, sai hoặc đã dùng trước đó.
+3. Tải danh sách server user tham gia, đăng ký vào `Hub` actor và gửi frame `READY`.
+
+**Sự kiện đã triển khai (Ngày 12):**
+- Server $\rightarrow$ Client: `READY` (`{ userId, guildIds, heartbeatIntervalMs }`), `HEARTBEAT_ACK` (`{}`), `ERROR` (`{ code, message }`).
+- Client $\rightarrow$ Server: `HEARTBEAT` (làm mới read deadline & trả `HEARTBEAT_ACK`), `TYPING_START` *(hook sẵn sàng cho Ngày 13–14)*.
+- Mã đóng WebSocket: `1000` (đóng bình thường), `1001` (server shutdown), `4002` (slow consumer — tràn hàng đợi gửi 256 frame), `4003` (client tự đóng khi mất heartbeat).
+
+---
+
+## 9. Biến môi trường cấu hình (`internal/config`)
 
 | Biến | Mặc định (Dev) | Mô tả |
 | :--- | :--- | :--- |
@@ -523,11 +550,13 @@ Xóa mềm tin nhắn (`deleted_at = now()`); cho phép **tác giả** hoặc **
 | `LOGIN_RATE_WINDOW` | `1m` | Độ dài cửa sổ rate limit đăng nhập. |
 | `MESSAGE_RATE_LIMIT` | `30` | Số tin nhắn tối đa trong mỗi cửa sổ/user. |
 | `MESSAGE_RATE_WINDOW` | `10s` | Độ dài cửa sổ rate limit gửi tin nhắn. |
+| `WS_TICKET_TTL` | `30s` | Thời hạn sống của vé nâng cấp WebSocket trên Redis. |
+| `WS_HEARTBEAT_INTERVAL` | `25s` | Chu kỳ heartbeat gửi cho client trong frame `READY`. |
 | `SHUTDOWN_TIMEOUT` | `10s` | Thời gian tối đa chờ graceful shutdown. |
 
 ---
 
-## 9. Trạng thái triển khai theo hợp đồng `openapi.yaml`
+## 10. Trạng thái triển khai theo hợp đồng `openapi.yaml`
 
 | Nhóm API | Endpoint | Trạng thái |
 | :--- | :--- | :--- |
@@ -537,4 +566,4 @@ Xóa mềm tin nhắn (`deleted_at = now()`); cho phép **tác giả** hoặc **
 | **Guilds & Invites** | `/api/v1/guilds/**`, `/api/v1/invites/{code}/accept` | Đã triển khai |
 | **Channels** | `/api/v1/guilds/{guildId}/channels`, `/api/v1/channels/{channelId}` | Đã triển khai |
 | **Messages** | `/api/v1/channels/{channelId}/messages/**` | Đã triển khai |
-| **WebSocket** | `POST /api/v1/ws/ticket`, `GET /ws?ticket=...` | Kế hoạch (Ngày 12–13) |
+| **WebSocket** | `POST /api/v1/ws/ticket`, `GET /ws?ticket=...` | Đã triển khai *(Redis Pub/Sub & `GatewayClient` FE vào Ngày 13)* |

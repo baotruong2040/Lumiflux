@@ -92,3 +92,9 @@ type MessageRepository interface {
 	UpdateContent(ctx context.Context, messageID uuid.UUID, content string) (*Message, error)
 	SoftDelete(ctx context.Context, messageID uuid.UUID) error
 }
+
+// TicketStore manages short-lived single-use WebSocket upgrade tickets (ADR-004).
+type TicketStore interface {
+	SaveTicket(ctx context.Context, ticket string, userID uuid.UUID, ttl time.Duration) error
+	ConsumeTicket(ctx context.Context, ticket string) (uuid.UUID, error)
+}

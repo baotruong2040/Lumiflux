@@ -31,9 +31,11 @@ type Config struct {
 	CORSAllowedOrigins []string
 	LoginRateLimit     int
 	LoginRateWindow    time.Duration
-	MessageRateLimit   int
-	MessageRateWindow  time.Duration
-	ShutdownTimeout    time.Duration
+	MessageRateLimit    int
+	MessageRateWindow   time.Duration
+	WSTicketTTL         time.Duration
+	WSHeartbeatInterval time.Duration
+	ShutdownTimeout     time.Duration
 }
 
 // Addr returns the HTTP listen address formatted as "host:port" (or ":port" when Host is empty).
@@ -85,6 +87,14 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	wsTicketTTL, err := getEnvDuration("WS_TICKET_TTL", 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	wsHeartbeatInterval, err := getEnvDuration("WS_HEARTBEAT_INTERVAL", 25*time.Second)
+	if err != nil {
+		return nil, err
+	}
 	shutdownTimeout, err := getEnvDuration("SHUTDOWN_TIMEOUT", 10*time.Second)
 	if err != nil {
 		return nil, err
@@ -97,24 +107,26 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		AppEnv:             appEnv,
-		Host:               getEnvString("HOST", defaultHost),
-		Port:               getEnvString("PORT", "8080"),
-		LogLevel:           getEnvString("LOG_LEVEL", "info"),
-		DatabaseURL:        getEnvString("DATABASE_URL", "postgres://discord:discord_secret_dev@localhost:5432/discord_clone?sslmode=disable"),
-		RedisAddr:          getEnvString("REDIS_ADDR", "localhost:6379"),
-		RedisPassword:      getEnvString("REDIS_PASSWORD", ""),
-		RedisDB:            redisDB,
-		JWTSecret:          getEnvString("JWT_SECRET", defaultDevJWTSecret),
-		AccessTokenTTL:     accessTTL,
-		RefreshTokenTTL:    refreshTTL,
-		BcryptCost:         bcryptCost,
-		CORSAllowedOrigins: getEnvCSV("CORS_ALLOWED_ORIGINS", []string{"http://localhost:5173", "http://127.0.0.1:5173", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"}),
-		LoginRateLimit:     loginRateLimit,
-		LoginRateWindow:    loginRateWindow,
-		MessageRateLimit:   messageRateLimit,
-		MessageRateWindow:  messageRateWindow,
-		ShutdownTimeout:    shutdownTimeout,
+		AppEnv:              appEnv,
+		Host:                getEnvString("HOST", defaultHost),
+		Port:                getEnvString("PORT", "8080"),
+		LogLevel:            getEnvString("LOG_LEVEL", "info"),
+		DatabaseURL:         getEnvString("DATABASE_URL", "postgres://discord:discord_secret_dev@localhost:5432/discord_clone?sslmode=disable"),
+		RedisAddr:           getEnvString("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:       getEnvString("REDIS_PASSWORD", ""),
+		RedisDB:             redisDB,
+		JWTSecret:           getEnvString("JWT_SECRET", defaultDevJWTSecret),
+		AccessTokenTTL:      accessTTL,
+		RefreshTokenTTL:     refreshTTL,
+		BcryptCost:          bcryptCost,
+		CORSAllowedOrigins:  getEnvCSV("CORS_ALLOWED_ORIGINS", []string{"http://localhost:5173", "http://127.0.0.1:5173", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"}),
+		LoginRateLimit:      loginRateLimit,
+		LoginRateWindow:     loginRateWindow,
+		MessageRateLimit:    messageRateLimit,
+		MessageRateWindow:   messageRateWindow,
+		WSTicketTTL:         wsTicketTTL,
+		WSHeartbeatInterval: wsHeartbeatInterval,
+		ShutdownTimeout:     shutdownTimeout,
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -165,6 +177,12 @@ func (c *Config) validate() error {
 	}
 	if c.MessageRateWindow <= 0 {
 		return errors.New("MESSAGE_RATE_WINDOW must be positive")
+	}
+	if c.WSTicketTTL <= 0 {
+		return errors.New("WS_TICKET_TTL must be positive")
+	}
+	if c.WSHeartbeatInterval <= 0 {
+		return errors.New("WS_HEARTBEAT_INTERVAL must be positive")
 	}
 	if c.ShutdownTimeout <= 0 {
 		return errors.New("SHUTDOWN_TIMEOUT must be positive")

@@ -22,6 +22,7 @@ import (
 	"github.com/truong/discord-clone-api/internal/controller"
 	"github.com/truong/discord-clone-api/internal/controller/dto"
 	"github.com/truong/discord-clone-api/internal/domain"
+	"github.com/truong/discord-clone-api/internal/gateway"
 	"github.com/truong/discord-clone-api/internal/router/middleware"
 	"github.com/truong/discord-clone-api/internal/service"
 	"github.com/truong/discord-clone-api/pkg/hasher"
@@ -502,19 +503,25 @@ func (r *memoryMessageRepo) SoftDelete(_ context.Context, messageID uuid.UUID) e
 }
 
 func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
+	return newTestRouterWithCleanup(nil, pgErr, redisErr)
+}
+
+func newTestRouterWithCleanup(t *testing.T, pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 	cfg := &config.Config{
-		AppEnv:             "test",
-		Port:               "8080",
-		LogLevel:           "error",
-		JWTSecret:          "router-test-secret-key-at-least-32-bytes!",
-		AccessTokenTTL:     15 * time.Minute,
-		RefreshTokenTTL:    7 * 24 * time.Hour,
-		BcryptCost:         bcrypt.MinCost,
-		CORSAllowedOrigins: []string{"http://localhost:5173", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"},
-		LoginRateLimit:     10,
-		LoginRateWindow:    time.Minute,
-		MessageRateLimit:   30,
-		MessageRateWindow:  10 * time.Second,
+		AppEnv:              "test",
+		Port:                "8080",
+		LogLevel:            "error",
+		JWTSecret:           "router-test-secret-key-at-least-32-bytes!",
+		AccessTokenTTL:      15 * time.Minute,
+		RefreshTokenTTL:     7 * 24 * time.Hour,
+		BcryptCost:          bcrypt.MinCost,
+		CORSAllowedOrigins:  []string{"http://localhost:5173", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"},
+		LoginRateLimit:      10,
+		LoginRateWindow:     time.Minute,
+		MessageRateLimit:    30,
+		MessageRateWindow:   10 * time.Second,
+		WSTicketTTL:         30 * time.Second,
+		WSHeartbeatInterval: 25 * time.Second,
 	}
 
 	log := logger.NewWithWriter(io.Discard, "error")
@@ -525,6 +532,7 @@ func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 	messageRepo := newMemoryMessageRepo(userRepo)
 	inviteRepo := newMemoryInviteRepo(guildRepo)
 	rateLimiter := newMemoryRateLimiter()
+	ticketStore := newMemoryTicketStore()
 
 	authSvc := service.NewAuthService(
 		userRepo,
@@ -545,22 +553,68 @@ func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 		cfg.MessageRateLimit,
 		cfg.MessageRateWindow,
 	)
+	ticketSvc := service.NewTicketService(ticketStore, cfg.WSTicketTTL)
+
+	var wsHandler gin.HandlerFunc
+	if t != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		hub := gateway.NewHub(cfg.WSHeartbeatInterval, log)
+		hubDone := make(chan struct{})
+		go func() {
+			defer close(hubDone)
+			hub.Run(ctx)
+		}()
+		t.Cleanup(func() {
+			cancel()
+			<-hubDone
+		})
+		wsHandler = gateway.NewHandler(hub, ticketSvc, guildRepo, cfg.CORSAllowedOrigins, log).ServeGin
+	}
 
 	r := New(Dependencies{
-		Config:            cfg,
-		Logger:            log,
-		TokenManager:      jwtMgr,
-		RateLimiter:       rateLimiter,
-		HealthController:  controller.NewHealthController(&stubHealthChecker{err: pgErr}, &stubHealthChecker{err: redisErr}, log),
-		AuthController:    controller.NewAuthController(authSvc),
-		UserController:    controller.NewUserController(authSvc, middleware.GetUserID),
-		GuildController:   controller.NewGuildController(guildSvc, middleware.GetUserID),
-		InviteController:  controller.NewInviteController(inviteSvc, middleware.GetUserID),
-		ChannelController: controller.NewChannelController(channelSvc, middleware.GetUserID),
-		MessageController: controller.NewMessageController(messageSvc, middleware.GetUserID),
+		Config:             cfg,
+		Logger:             log,
+		TokenManager:       jwtMgr,
+		RateLimiter:        rateLimiter,
+		HealthController:   controller.NewHealthController(&stubHealthChecker{err: pgErr}, &stubHealthChecker{err: redisErr}, log),
+		AuthController:     controller.NewAuthController(authSvc),
+		UserController:     controller.NewUserController(authSvc, middleware.GetUserID),
+		GuildController:    controller.NewGuildController(guildSvc, middleware.GetUserID),
+		InviteController:   controller.NewInviteController(inviteSvc, middleware.GetUserID),
+		ChannelController:  controller.NewChannelController(channelSvc, middleware.GetUserID),
+		MessageController:  controller.NewMessageController(messageSvc, middleware.GetUserID),
+		WSTicketController: controller.NewWSTicketController(ticketSvc, middleware.GetUserID),
+		WSHandler:          wsHandler,
 	})
 
 	return r, jwtMgr
+}
+
+type memoryTicketStore struct {
+	mu      sync.Mutex
+	entries map[string]uuid.UUID
+}
+
+func newMemoryTicketStore() *memoryTicketStore {
+	return &memoryTicketStore{entries: make(map[string]uuid.UUID)}
+}
+
+func (s *memoryTicketStore) SaveTicket(_ context.Context, ticket string, userID uuid.UUID, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries[ticket] = userID
+	return nil
+}
+
+func (s *memoryTicketStore) ConsumeTicket(_ context.Context, ticket string) (uuid.UUID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	uid, ok := s.entries[ticket]
+	if !ok {
+		return uuid.Nil, domain.NewError(domain.ErrInvalidToken, "INVALID_TICKET", "invalid ticket")
+	}
+	delete(s.entries, ticket)
+	return uid, nil
 }
 
 func doJSONRequest(t *testing.T, r http.Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -921,4 +975,33 @@ func TestRouter_MessageRoutes(t *testing.T) {
 	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/channels/"+channelID.String()+"/messages", dto.SendMessageRequest{Content: "too many"}, ownerHdr)
 	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
 	assert.NotEmpty(t, rec.Header().Get("Retry-After"))
+}
+
+func TestRouter_WebSocketTicketAndUpgrade(t *testing.T) {
+	r, _ := newTestRouterWithCleanup(t, nil, nil)
+
+	// Unauthenticated POST /api/v1/ws/ticket -> 401
+	assert.Equal(t, http.StatusUnauthorized, doJSONRequest(t, r, http.MethodPost, "/api/v1/ws/ticket", nil, nil).Code)
+
+	// Register user & issue ticket
+	rec := doJSONRequest(t, r, http.MethodPost, "/api/v1/auth/register", dto.RegisterRequest{
+		Username:    "ws_router",
+		Email:       "ws_router@example.com",
+		DisplayName: "WS Router",
+		Password:    "Password123!",
+	}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var authRes dto.AuthResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &authRes))
+
+	hdr := map[string]string{"Authorization": "Bearer " + authRes.AccessToken}
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/ws/ticket", nil, hdr)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var ticketResp dto.WSTicketResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ticketResp))
+	assert.NotEmpty(t, ticketResp.Ticket)
+
+	// Invalid ticket at GET /ws -> 401
+	rec = doJSONRequest(t, r, http.MethodGet, "/ws?ticket=does-not-exist", nil, nil)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
