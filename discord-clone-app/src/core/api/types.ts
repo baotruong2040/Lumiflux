@@ -68,6 +68,41 @@ export interface Invite {
   createdAt: string
 }
 
+export interface Channel {
+  id: string
+  guildId: string
+  name: string
+  type: number
+  topic: string | null
+  position: number
+  createdAt: string
+}
+
+export interface CreateGuildRequest {
+  name: string
+  iconUrl?: string | null
+}
+
+export interface UpdateGuildRequest {
+  name?: string
+  iconUrl?: string | null
+}
+
+export interface CreateInviteRequest {
+  maxUses?: number | null
+  expiresInHours?: number | null
+}
+
+export interface CreateChannelRequest {
+  name: string
+  topic?: string | null
+}
+
+export interface UpdateChannelRequest {
+  name?: string
+  topic?: string | null
+}
+
 export interface ApiErrorEnvelope {
   error: {
     code: string

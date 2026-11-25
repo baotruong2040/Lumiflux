@@ -2,7 +2,7 @@
 
 - **Khung thời gian triển khai:** 16/11/2026 – 29/11/2026 (14 ngày)
 - **Cập nhật lần cuối:** 25/11/2026
-- **Trạng thái tổng thể:** Đã hoàn thành Ngày 1, Ngày 2, Ngày 4, Ngày 5, Ngày 6, Ngày 7 (Authentication Frontend + Theme `discord-night`) và Ngày 8 (Guild & Invite Backend); còn xác nhận mở cửa sổ Desktop GUI Ngày 3 (`npx tauri dev`) và chuyển sang Ngày 9 (Channel Backend & Main Layout).
+- **Trạng thái tổng thể:** Đã hoàn thành Ngày 1, Ngày 2, Ngày 4, Ngày 5, Ngày 6, Ngày 7, Ngày 8 và Ngày 9 (Channel Backend & 3-Column Dark Mode UI); còn bước xác nhận tương tác trực tiếp trên cửa sổ Desktop GUI Ngày 3 (`npx tauri dev` đã biên dịch và chạy process `app.exe` + WebView2) và chuyển sang Ngày 10 (Message Backend & Cursor Pagination).
 
 ---
 
@@ -18,7 +18,7 @@
 | **Ngày 6** | Authentication Backend (`register`, `login`, `refresh` xoay vòng, `logout`) | **Hoàn thành** | Hoàn thiện `register`, `login` (`429 RATE_LIMITED`), `refresh` (`GETDEL` xoay vòng `refresh:{hash}`), `logout`, `GET/PATCH /api/v1/users/@me`; unit test + integration test `TC-AUTH-01..06` (backend) + `go vet ./...` + `go test -race ./...` xanh. |
 | **Ngày 7** | Authentication Frontend & Route Guard (Web + Tauri) | **Hoàn thành** | Dựng `tokens.css` (`discord-night`), `StorageAdapter`, `httpClient` auto-refresh `401`, `useAuthStore`, `RouteGuards`, `LoginPage`/`RegisterPage`; `npm run lint` & `npm run build` xanh, E2E Web (`TC-AUTH-05` + F5 giữ phiên) pass, `cargo check` Tauri shell xanh. |
 | **Ngày 8** | Guild, Membership & Invite Backend | **Hoàn thành** | Hoàn thiện `GuildService`, `InviteService`, `GuildRepository`/`InviteRepository` (transaction + `FOR UPDATE`), `PresenceStore`, hook `Unsubscribe` (ADR-007); `TC-GLD-01..04` + `go vet ./...` + `go test -race ./...` xanh. |
-| **Ngày 9** | Channel Backend & Giao diện Main Layout (Server/Channel) | **Tiếp theo** | Chưa bắt đầu. |
+| **Ngày 9** | Channel Backend & Giao diện Main Layout (Server/Channel) | **Hoàn thành** | Hoàn thiện `ChannelService`, `ChannelController`, `ChannelRepository` (`403` member, `409` trùng tên); dựng layout 3 cột Dark Mode + đầy đủ modal Server/Invite/Channel; `TC-CHN-01..02` + `go test -race ./...` + `npm run lint` (`0 warnings`) + `npm run build` + Web E2E 2 tài khoản + `npx tauri dev` launch pass. |
 | **Ngày 10** | Message Backend & Cursor Pagination theo UUIDv7 | **Kế hoạch** | Chưa bắt đầu. |
 | **Ngày 11** | Chat UI & Optimistic Update (`nonce`) | **Kế hoạch** | Chưa bắt đầu. |
 | **Ngày 12** | WebSocket Gateway Backend (`Hub`, `Client`, `Ticket` dùng 1 lần) | **Kế hoạch** | Chưa bắt đầu. |
@@ -60,7 +60,20 @@
   - `go vet ./...` và `go test -race -count=1 ./...` pass toàn bộ package (`config`, `logger`, `idgen`, `hasher`, `jwtutil`, `service`, `router`, `integration`).
   - Integration test trên PostgreSQL + Redis thật (`RUN_INTEGRATION_TESTS=1`): `TC-GLD-01` (tạo guild + `#general` + `owner` trong 1 transaction, CRUD + phân quyền `owner`), `TC-GLD-02` (chặn `owner` rời server `403 FORBIDDEN`), `TC-GLD-03` (tạo/nhận invite, liệt kê members + presence online, rời server gọi hook `Unsubscribe` ADR-007), `TC-GLD-04` (`400 INVITE_EXPIRED`, `400 INVITE_EXHAUSTED`, `404 INVITE_NOT_FOUND`) đều pass.
 
+### Mốc Ngày 9 — Channel Backend & 3-Column Dark Mode UI (25/11/2026)
+- **Backend (`discord-clone-api/`):**
+  - Bổ sung `Role.CanManageChannels()`, `UpdateChannelParams`, `domain.ChannelRepository`, `postgres.ChannelRepository`, `service.ChannelService`, `controller.ChannelController`, DTO và route `GET/POST /api/v1/guilds/:guildId/channels`, `PATCH/DELETE /api/v1/channels/:channelId`.
+  - `go list` trên `internal/domain` và `internal/service` giữ nguyên không có dependency framework/driver.
+  - `go vet ./...` và `go test -race -count=1 ./...` pass toàn bộ package (bao gồm `channel_service_test.go` và `TestRouter_ChannelRoutes`).
+  - Integration test thật (`RUN_INTEGRATION_TESTS=1 go test -v -race -count=1 ./internal/integration/...`): **13/13 pass** (`Readyz`, `TC-AUTH-01..06`, `TC-GLD-01..04`, `TC-CHN-01` member 403 / admin SQL + owner CRUD, `TC-CHN-02` trùng tên kênh `409 CHANNEL_NAME_TAKEN`).
+- **Frontend (`discord-clone-app/`):**
+  - Bổ sung `guildApi`, `channelApi`, `useWorkspaceStore`, `ServerBar`, `ChannelSidebar`, `ChatArea` (kèm Member List thu gọn), và các modal (`CreateServerModal`, `EditServerModal`, `JoinServerModal`, `CreateInviteModal`, `ChannelFormModal`, `ConfirmActionModal`), đồng bộ URL `/app/guilds/:guildId/channels/:channelId`.
+  - `npm run lint` (`oxlint`): `0 warnings, 0 errors` (27 file).
+  - `npm run build` (`tsc -b && vite build`): build thành công (`dist/`).
+  - Web Browser E2E (`http://localhost:5173`): pass 10/10 bước với 2 tài khoản (`Owner` tạo server, tạo/chuyển kênh, F5 giữ phiên & kênh, kiểm tra `409` trùng tên, sửa kênh, tạo mã mời; `Member` tham gia bằng mã mời, xác minh ẩn nút quản trị kênh & chỉ có "Rời server", rời server; `Owner` xóa kênh & xóa server), 0 lỗi console/CORS.
+  - Desktop (`discord-clone-app/src-tauri/`): `cargo check` pass; `npx tauri dev` biên dịch xong trong `20.32s` và khởi chạy `target\debug\app.exe` cùng tiến trình WebView2.
+
 ---
 
 ## 3. Việc cần làm tiếp theo
-Xác nhận mở cửa sổ Desktop GUI Ngày 3 (`npx tauri dev` tại máy desktop) và bắt đầu **Ngày 9**: Xây dựng **Channel Backend & Giao diện Main Layout 3 cột** (`ServerBar`, `ChannelSidebar`, `ChatArea`).
+Bắt đầu **Ngày 10**: Xây dựng **Message Backend & Cursor Pagination theo UUIDv7** (`POST/GET /channels/:channelId/messages`, `PATCH/DELETE /channels/:channelId/messages/:messageId`, rate limit `rl:{userID}:msg`), sau đó tiếp tục **Ngày 11 (Chat UI)** và **Ngày 12–13 (WebSocket Hub & Realtime)**.

@@ -58,6 +58,15 @@ type GuildRepository interface {
 	RemoveMember(ctx context.Context, guildID, userID uuid.UUID) error
 }
 
+// ChannelRepository defines persistence operations for channels within guilds.
+type ChannelRepository interface {
+	Create(ctx context.Context, channel *Channel) error
+	ListByGuild(ctx context.Context, guildID uuid.UUID) ([]Channel, error)
+	GetByID(ctx context.Context, channelID uuid.UUID) (*Channel, error)
+	Update(ctx context.Context, channelID uuid.UUID, params UpdateChannelParams) (*Channel, error)
+	Delete(ctx context.Context, channelID uuid.UUID) error
+}
+
 // InviteRepository defines persistence operations for guild invites.
 type InviteRepository interface {
 	Create(ctx context.Context, invite *Invite) error

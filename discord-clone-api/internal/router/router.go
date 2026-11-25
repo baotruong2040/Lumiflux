@@ -13,15 +13,16 @@ import (
 
 // Dependencies bundles the components required to build the HTTP router.
 type Dependencies struct {
-	Config           *config.Config
-	Logger           *slog.Logger
-	TokenManager     domain.TokenManager
-	RateLimiter      domain.RateLimiter
-	HealthController *controller.HealthController
-	AuthController   *controller.AuthController
-	UserController   *controller.UserController
-	GuildController  *controller.GuildController
-	InviteController *controller.InviteController
+	Config            *config.Config
+	Logger            *slog.Logger
+	TokenManager      domain.TokenManager
+	RateLimiter       domain.RateLimiter
+	HealthController  *controller.HealthController
+	AuthController    *controller.AuthController
+	UserController    *controller.UserController
+	GuildController   *controller.GuildController
+	InviteController  *controller.InviteController
+	ChannelController *controller.ChannelController
 }
 
 // New constructs and configures the Gin engine with middlewares and v1 routes.
@@ -80,6 +81,10 @@ func New(deps Dependencies) *gin.Engine {
 			if deps.InviteController != nil {
 				guilds.POST("/:guildId/invites", deps.InviteController.Create)
 			}
+			if deps.ChannelController != nil {
+				guilds.GET("/:guildId/channels", deps.ChannelController.List)
+				guilds.POST("/:guildId/channels", deps.ChannelController.Create)
+			}
 		}
 	}
 
@@ -87,6 +92,14 @@ func New(deps Dependencies) *gin.Engine {
 		invites := v1.Group("/invites", middleware.Auth(deps.TokenManager))
 		{
 			invites.POST("/:code/accept", deps.InviteController.Accept)
+		}
+	}
+
+	if deps.ChannelController != nil {
+		channels := v1.Group("/channels", middleware.Auth(deps.TokenManager))
+		{
+			channels.PATCH("/:channelId", deps.ChannelController.Update)
+			channels.DELETE("/:channelId", deps.ChannelController.Delete)
 		}
 	}
 

@@ -99,6 +99,7 @@ func setupIntegrationEnv(t *testing.T) *testEnv {
 	jwtMgr := jwtutil.NewManager(cfg.JWTSecret, cfg.AccessTokenTTL)
 	userRepo := postgres.NewUserRepository(pool)
 	guildRepo := postgres.NewGuildRepository(pool)
+	channelRepo := postgres.NewChannelRepository(pool)
 	inviteRepo := postgres.NewInviteRepository(pool)
 	subs := &recordingSubManager{}
 
@@ -111,17 +112,19 @@ func setupIntegrationEnv(t *testing.T) *testEnv {
 	)
 	guildSvc := service.NewGuildService(guildRepo, redisstore.NewPresenceStore(redisClient), subs)
 	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, subs)
+	channelSvc := service.NewChannelService(guildRepo, channelRepo)
 
 	engine := router.New(router.Dependencies{
-		Config:           cfg,
-		Logger:           log,
-		TokenManager:     jwtMgr,
-		RateLimiter:      redisstore.NewRateLimiter(redisClient),
-		HealthController: controller.NewHealthController(postgres.NewHealthChecker(pool), redisstore.NewHealthChecker(redisClient), log),
-		AuthController:   controller.NewAuthController(authSvc),
-		UserController:   controller.NewUserController(authSvc, middleware.GetUserID),
-		GuildController:  controller.NewGuildController(guildSvc, middleware.GetUserID),
-		InviteController: controller.NewInviteController(inviteSvc, middleware.GetUserID),
+		Config:            cfg,
+		Logger:            log,
+		TokenManager:      jwtMgr,
+		RateLimiter:       redisstore.NewRateLimiter(redisClient),
+		HealthController:  controller.NewHealthController(postgres.NewHealthChecker(pool), redisstore.NewHealthChecker(redisClient), log),
+		AuthController:    controller.NewAuthController(authSvc),
+		UserController:    controller.NewUserController(authSvc, middleware.GetUserID),
+		GuildController:   controller.NewGuildController(guildSvc, middleware.GetUserID),
+		InviteController:  controller.NewInviteController(inviteSvc, middleware.GetUserID),
+		ChannelController: controller.NewChannelController(channelSvc, middleware.GetUserID),
 	})
 
 	env := &testEnv{

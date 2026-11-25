@@ -371,7 +371,70 @@ Chấp nhận mã mời trong 1 transaction (`SELECT ... FOR UPDATE`), tăng `us
 
 ---
 
-## 6. Biến môi trường cấu hình (`internal/config`)
+## 6. Channel (Kênh văn bản)
+
+Tất cả endpoint nhóm Channel yêu cầu header `Authorization: Bearer <accessToken>` và xác thực tư cách thành viên guild.  
+Các thao tác ghi (`POST`, `PATCH`, `DELETE`) chỉ cho phép vai trò `owner` hoặc `admin`; vai trò `member` bị từ chối với `403 FORBIDDEN`.
+
+### 6.1. `GET /api/v1/guilds/:guildId/channels`
+Lấy danh sách kênh của server (sắp xếp theo `position ASC, created_at ASC, id ASC`).
+
+**Response `200 OK`:** Mảng đối tượng `Channel`:
+```json
+[
+  {
+    "id": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a6d",
+    "guildId": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a6c",
+    "name": "general",
+    "type": 0,
+    "topic": null,
+    "position": 0,
+    "createdAt": "2026-11-25T14:00:00Z"
+  }
+]
+```
+
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 GUILD_NOT_FOUND`.
+
+### 6.2. `POST /api/v1/guilds/:guildId/channels`
+Tạo kênh văn bản mới (`type = 0`), chỉ `owner` hoặc `admin`. Tự động tăng `position` tiếp nối trong guild.
+
+**Request Body:**
+```json
+{
+  "name": "backend-api",
+  "topic": "Thảo luận kiến trúc Go & PostgreSQL"
+}
+```
+- `name`: chuỗi `1–100` ký tự sau khi `TrimSpace`, duy nhất trong cùng guild (`UNIQUE (guild_id, name)`).
+- `topic`: tùy chọn (`null` hoặc tối đa `255` ký tự).
+
+**Response `201 Created`:** Đối tượng `Channel`.  
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 GUILD_NOT_FOUND`, `409 CHANNEL_NAME_TAKEN`.
+
+### 6.3. `PATCH /api/v1/channels/:channelId`
+Đổi tên hoặc cập nhật/xóa `topic` của kênh, chỉ `owner` hoặc `admin`.
+
+**Request Body:**
+```json
+{
+  "name": "backend-core",
+  "topic": null
+}
+```
+
+**Response `200 OK`:** Đối tượng `Channel` đã cập nhật.  
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 CHANNEL_NOT_FOUND`, `409 CHANNEL_NAME_TAKEN`.
+
+### 6.4. `DELETE /api/v1/channels/:channelId`
+Xóa kênh khỏi server, chỉ `owner` hoặc `admin`.
+
+**Response `204 No Content`** (không có body).  
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 CHANNEL_NOT_FOUND`.
+
+---
+
+## 7. Biến môi trường cấu hình (`internal/config`)
 
 | Biến | Mặc định (Dev) | Mô tả |
 | :--- | :--- | :--- |
@@ -393,7 +456,7 @@ Chấp nhận mã mời trong 1 transaction (`SELECT ... FOR UPDATE`), tăng `us
 
 ---
 
-## 7. Trạng thái triển khai theo hợp đồng `openapi.yaml`
+## 8. Trạng thái triển khai theo hợp đồng `openapi.yaml`
 
 | Nhóm API | Endpoint | Trạng thái |
 | :--- | :--- | :--- |
@@ -401,6 +464,6 @@ Chấp nhận mã mời trong 1 transaction (`SELECT ... FOR UPDATE`), tăng `us
 | **Auth** | `POST /api/v1/auth/register`, `/login`, `/refresh`, `/logout` | Đã triển khai |
 | **Users** | `GET /api/v1/users/@me`, `PATCH /api/v1/users/@me` | Đã triển khai |
 | **Guilds & Invites** | `/api/v1/guilds/**`, `/api/v1/invites/{code}/accept` | Đã triển khai |
-| **Channels** | `/api/v1/guilds/{guildId}/channels`, `/api/v1/channels/{channelId}` | Kế hoạch (Ngày 9) |
+| **Channels** | `/api/v1/guilds/{guildId}/channels`, `/api/v1/channels/{channelId}` | Đã triển khai |
 | **Messages** | `/api/v1/channels/{channelId}/messages/**` | Kế hoạch (Ngày 10) |
 | **WebSocket** | `POST /api/v1/ws/ticket`, `GET /ws?ticket=...` | Kế hoạch (Ngày 12–13) |

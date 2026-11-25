@@ -36,9 +36,9 @@
 - [x] **Ngày 8 (23/11/2026) — Xây dựng Guild & Invite Backend**
   - *Mục tiêu:* CRUD Guild (transaction tạo guild + `#general` + `owner`), danh sách thành viên, rời server (chặn `owner`), tạo và chấp nhận mã mời (`POST /invites/:code/accept`, mã mời hết hạn/hết lượt trả `400`); gán `admin` bằng SQL khi test.
   - *Bằng chứng:* Hoàn thiện `GuildService`, `InviteService`, `GuildRepository`/`InviteRepository` (`pgx` transaction + `SELECT ... FOR UPDATE`), `PresenceStore` (`MGET`), interface/hook `GuildSubscriptionManager.Unsubscribe` (ADR-007), và controller/router; unit test + `router_test.go` + integration test thật trên PostgreSQL/Redis (`TC-GLD-01..04`) pass với `go test -race -count=1 ./...` & `go vet ./...`.
-- [ ] **Ngày 9 (24/11/2026) — Xây dựng Channel & Giao diện Server**
+- [x] **Ngày 9 (24/11/2026) — Xây dựng Channel & Giao diện Server**
   - *Mục tiêu:* API CRUD Channel (`owner`/`admin`), dựng layout 3 cột Dark Mode (`ServerBar`, `ChannelSidebar`, `ChatArea`), luồng tạo/tham gia server và chọn kênh trên UI.
-  - *Bằng chứng:* Đăng nhập, tạo server, tạo kênh và chuyển qua lại giữa các kênh trên giao diện.
+  - *Bằng chứng:* Hoàn thiện `ChannelRepository` (`postgres`), `ChannelService`, `ChannelController` (`GET/POST /guilds/:guildId/channels`, `PATCH/DELETE /channels/:channelId`, kiểm tra `owner`/`admin` `403` và trùng tên `409`), unit test + `router_test` + integration test `TC-CHN-01..02` trên PostgreSQL/Redis thật đều pass với `go test -race -count=1 ./...` & `go vet ./...`; dựng 3-column Dark UI (`ServerBar`, `ChannelSidebar`, `ChatArea`, Member List + toàn bộ modal tạo/sửa/rời/xóa server, tạo mã mời, tham gia bằng mã mời, tạo/sửa/xóa kênh); `npm run lint` (`0 warnings, 0 errors`), `npm run build` (`tsc -b && vite build`), `cargo check` xanh; Web E2E (`http://localhost:5173`) pass đủ 10 bước tạo server → tạo/chuyển/trùng tên/sửa/xóa kênh → mời & tham gia/rời server bằng 2 tài khoản (0 lỗi console/CORS); `npx tauri dev` biên dịch thành công (`20.32s`) và khởi chạy `app.exe` + WebView2.
 - [ ] **Ngày 10 (25/11/2026) — Xây dựng Message Backend**
   - *Mục tiêu:* API gửi tin (`POST /channels/:id/messages` kèm `nonce`), tải lịch sử cursor pagination (`?before=<id>&limit=50`), API sửa (`PATCH`) và xóa mềm (`DELETE`) tin nhắn.
   - *Bằng chứng:* Seed 1.000 tin nhắn và kiểm tra phân trang cursor không bị trùng/sót bản ghi.

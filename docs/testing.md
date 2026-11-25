@@ -39,8 +39,8 @@
 | `TC-GLD-05` | Thành viên rời server khi tab đang mở (ADR-007) | Tab đó không còn nhận `MESSAGE_CREATE` của server cũ; những người còn lại nhận `GUILD_MEMBER_REMOVE`. | `[ ]` |
 | `TC-GLD-06` | Gán `admin` bằng SQL, rồi `POST` kênh và xóa tin của `member` | Thành công; `member` thường vẫn bị `403`. | `[ ]` |
 | `TC-GLD-07` | `Owner` xóa server khi thành viên khác đang online | Client kia nhận `GUILD_DELETE`, server biến mất khỏi thanh bên, không cần F5. | `[ ]` |
-| `TC-CHN-01` | `Member` thường gọi `POST` hoặc `DELETE` channel | Từ chối với mã `403 FORBIDDEN`. | `[ ]` |
-| `TC-CHN-02` | `Owner`/`Admin` tạo 2 kênh trùng tên trong cùng server | Từ chối với mã `409 Conflict`. | `[ ]` |
+| `TC-CHN-01` | `Member` thường gọi `POST` hoặc `DELETE` channel | Từ chối với mã `403 FORBIDDEN`. | `[x]` |
+| `TC-CHN-02` | `Owner`/`Admin` tạo 2 kênh trùng tên trong cùng server | Từ chối với mã `409 Conflict`. | `[x]` |
 
 ### 2.3. Message & Cursor Pagination
 | Mã TC | Kịch bản kiểm thử | Kết quả kỳ vọng | Trạng thái |

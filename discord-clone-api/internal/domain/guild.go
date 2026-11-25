@@ -21,6 +21,11 @@ func (r Role) IsValid() bool {
 	return r == RoleOwner || r == RoleAdmin || r == RoleMember
 }
 
+// CanManageChannels reports whether r has permission to create, update, or delete channels.
+func (r Role) CanManageChannels() bool {
+	return r == RoleOwner || r == RoleAdmin
+}
+
 // Guild represents a Discord-style server.
 type Guild struct {
 	ID        uuid.UUID
@@ -46,6 +51,13 @@ type Channel struct {
 	Topic     *string
 	Position  int
 	CreatedAt time.Time
+}
+
+// UpdateChannelParams specifies mutable fields for a partial channel update.
+type UpdateChannelParams struct {
+	Name     *string
+	Topic    *string
+	TopicSet bool
 }
 
 // GuildMember links a user to a guild with role, nickname, and presence state.

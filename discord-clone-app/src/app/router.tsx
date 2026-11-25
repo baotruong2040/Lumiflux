@@ -2,7 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute, PublicOnlyRoute } from '../features/auth/components/RouteGuards'
 import { LoginPage } from '../features/auth/pages/LoginPage'
 import { RegisterPage } from '../features/auth/pages/RegisterPage'
-import { WorkspacePlaceholderPage } from '../features/auth/pages/WorkspacePlaceholderPage'
+import { WorkspacePage } from '../features/workspace/pages/WorkspacePage'
 
 export function AppRouter() {
   return (
@@ -14,7 +14,9 @@ export function AppRouter() {
         </Route>
 
         <Route element={<ProtectedRoute />}>
-          <Route path="/app" element={<WorkspacePlaceholderPage />} />
+          <Route path="/app" element={<WorkspacePage />} />
+          <Route path="/app/guilds/:guildId" element={<WorkspacePage />} />
+          <Route path="/app/guilds/:guildId/channels/:channelId" element={<WorkspacePage />} />
         </Route>
 
         <Route path="/" element={<Navigate to="/app" replace />} />

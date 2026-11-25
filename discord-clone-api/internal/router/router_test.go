@@ -157,27 +157,31 @@ func (l *memoryRateLimiter) Allow(_ context.Context, key string, limit int, wind
 }
 
 type memoryGuildRepo struct {
-	mu      sync.RWMutex
-	guilds  map[uuid.UUID]domain.Guild
-	members map[uuid.UUID]map[uuid.UUID]domain.GuildMember
-	users   *memoryUserRepo
+	mu       sync.RWMutex
+	guilds   map[uuid.UUID]domain.Guild
+	channels map[uuid.UUID]domain.Channel
+	members  map[uuid.UUID]map[uuid.UUID]domain.GuildMember
+	users    *memoryUserRepo
 }
 
 func newMemoryGuildRepo(users *memoryUserRepo) *memoryGuildRepo {
 	return &memoryGuildRepo{
-		guilds:  make(map[uuid.UUID]domain.Guild),
-		members: make(map[uuid.UUID]map[uuid.UUID]domain.GuildMember),
-		users:   users,
+		guilds:   make(map[uuid.UUID]domain.Guild),
+		channels: make(map[uuid.UUID]domain.Channel),
+		members:  make(map[uuid.UUID]map[uuid.UUID]domain.GuildMember),
+		users:    users,
 	}
 }
 
-func (r *memoryGuildRepo) CreateWithDefaultChannel(_ context.Context, guild *domain.Guild, _ *domain.Channel, owner *domain.GuildMember) error {
+func (r *memoryGuildRepo) CreateWithDefaultChannel(_ context.Context, guild *domain.Guild, ch *domain.Channel, owner *domain.GuildMember) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now().UTC()
 	guild.CreatedAt = now
+	ch.CreatedAt = now
 	owner.JoinedAt = now
 	r.guilds[guild.ID] = *guild
+	r.channels[ch.ID] = *ch
 	r.members[guild.ID] = map[uuid.UUID]domain.GuildMember{owner.UserID: *owner}
 	return nil
 }
@@ -320,6 +324,90 @@ func (r *memoryInviteRepo) Accept(ctx context.Context, code string, userID uuid.
 	return &g, &member, nil
 }
 
+type memoryChannelRepo struct {
+	guilds *memoryGuildRepo
+}
+
+func newMemoryChannelRepo(guilds *memoryGuildRepo) *memoryChannelRepo {
+	return &memoryChannelRepo{guilds: guilds}
+}
+
+func (r *memoryChannelRepo) Create(_ context.Context, ch *domain.Channel) error {
+	r.guilds.mu.Lock()
+	defer r.guilds.mu.Unlock()
+	maxPos := -1
+	for _, existing := range r.guilds.channels {
+		if existing.GuildID == ch.GuildID {
+			if existing.Name == ch.Name {
+				return domain.NewError(domain.ErrConflict, "CHANNEL_NAME_TAKEN", "channel name already exists in this guild")
+			}
+			if existing.Position > maxPos {
+				maxPos = existing.Position
+			}
+		}
+	}
+	ch.Position = maxPos + 1
+	ch.CreatedAt = time.Now().UTC()
+	r.guilds.channels[ch.ID] = *ch
+	return nil
+}
+
+func (r *memoryChannelRepo) ListByGuild(_ context.Context, guildID uuid.UUID) ([]domain.Channel, error) {
+	r.guilds.mu.RLock()
+	defer r.guilds.mu.RUnlock()
+	out := make([]domain.Channel, 0)
+	for _, ch := range r.guilds.channels {
+		if ch.GuildID == guildID {
+			out = append(out, ch)
+		}
+	}
+	return out, nil
+}
+
+func (r *memoryChannelRepo) GetByID(_ context.Context, channelID uuid.UUID) (*domain.Channel, error) {
+	r.guilds.mu.RLock()
+	defer r.guilds.mu.RUnlock()
+	ch, ok := r.guilds.channels[channelID]
+	if !ok {
+		return nil, domain.NewError(domain.ErrNotFound, "CHANNEL_NOT_FOUND", "channel not found")
+	}
+	cp := ch
+	return &cp, nil
+}
+
+func (r *memoryChannelRepo) Update(_ context.Context, channelID uuid.UUID, params domain.UpdateChannelParams) (*domain.Channel, error) {
+	r.guilds.mu.Lock()
+	defer r.guilds.mu.Unlock()
+	ch, ok := r.guilds.channels[channelID]
+	if !ok {
+		return nil, domain.NewError(domain.ErrNotFound, "CHANNEL_NOT_FOUND", "channel not found")
+	}
+	if params.Name != nil {
+		for _, other := range r.guilds.channels {
+			if other.GuildID == ch.GuildID && other.ID != ch.ID && other.Name == *params.Name {
+				return nil, domain.NewError(domain.ErrConflict, "CHANNEL_NAME_TAKEN", "channel name already exists in this guild")
+			}
+		}
+		ch.Name = *params.Name
+	}
+	if params.TopicSet {
+		ch.Topic = params.Topic
+	}
+	r.guilds.channels[channelID] = ch
+	cp := ch
+	return &cp, nil
+}
+
+func (r *memoryChannelRepo) Delete(_ context.Context, channelID uuid.UUID) error {
+	r.guilds.mu.Lock()
+	defer r.guilds.mu.Unlock()
+	if _, ok := r.guilds.channels[channelID]; !ok {
+		return domain.NewError(domain.ErrNotFound, "CHANNEL_NOT_FOUND", "channel not found")
+	}
+	delete(r.guilds.channels, channelID)
+	return nil
+}
+
 func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 	cfg := &config.Config{
 		AppEnv:             "test",
@@ -338,6 +426,7 @@ func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 	jwtMgr := jwtutil.NewManager(cfg.JWTSecret, cfg.AccessTokenTTL)
 	userRepo := newMemoryUserRepo()
 	guildRepo := newMemoryGuildRepo(userRepo)
+	channelRepo := newMemoryChannelRepo(guildRepo)
 	inviteRepo := newMemoryInviteRepo(guildRepo)
 
 	authSvc := service.NewAuthService(
@@ -349,17 +438,19 @@ func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 	)
 	guildSvc := service.NewGuildService(guildRepo, nil, domain.NoopGuildSubscriptionManager{})
 	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, domain.NoopGuildSubscriptionManager{})
+	channelSvc := service.NewChannelService(guildRepo, channelRepo)
 
 	r := New(Dependencies{
-		Config:           cfg,
-		Logger:           log,
-		TokenManager:     jwtMgr,
-		RateLimiter:      newMemoryRateLimiter(),
-		HealthController: controller.NewHealthController(&stubHealthChecker{err: pgErr}, &stubHealthChecker{err: redisErr}, log),
-		AuthController:   controller.NewAuthController(authSvc),
-		UserController:   controller.NewUserController(authSvc, middleware.GetUserID),
-		GuildController:  controller.NewGuildController(guildSvc, middleware.GetUserID),
-		InviteController: controller.NewInviteController(inviteSvc, middleware.GetUserID),
+		Config:            cfg,
+		Logger:            log,
+		TokenManager:      jwtMgr,
+		RateLimiter:       newMemoryRateLimiter(),
+		HealthController:  controller.NewHealthController(&stubHealthChecker{err: pgErr}, &stubHealthChecker{err: redisErr}, log),
+		AuthController:    controller.NewAuthController(authSvc),
+		UserController:    controller.NewUserController(authSvc, middleware.GetUserID),
+		GuildController:   controller.NewGuildController(guildSvc, middleware.GetUserID),
+		InviteController:  controller.NewInviteController(inviteSvc, middleware.GetUserID),
+		ChannelController: controller.NewChannelController(channelSvc, middleware.GetUserID),
 	})
 
 	return r, jwtMgr
@@ -585,4 +676,80 @@ func TestRouter_GuildAndInviteRoutes(t *testing.T) {
 
 	// Owner delete guild
 	assert.Equal(t, http.StatusNoContent, doJSONRequest(t, r, http.MethodDelete, "/api/v1/guilds/"+guild.ID.String(), nil, ownerHdr).Code)
+}
+
+func TestRouter_ChannelRoutes(t *testing.T) {
+	r, _ := newTestRouter(nil, nil)
+
+	rec := doJSONRequest(t, r, http.MethodPost, "/api/v1/auth/register", dto.RegisterRequest{
+		Username:    "ch_owner",
+		Email:       "ch_owner@example.com",
+		DisplayName: "Ch Owner",
+		Password:    "Password123!",
+	}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var ownerAuth dto.AuthResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ownerAuth))
+
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/auth/register", dto.RegisterRequest{
+		Username:    "ch_member",
+		Email:       "ch_member@example.com",
+		DisplayName: "Ch Member",
+		Password:    "Password123!",
+	}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var memberAuth dto.AuthResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &memberAuth))
+
+	ownerHdr := map[string]string{"Authorization": "Bearer " + ownerAuth.AccessToken}
+	memberHdr := map[string]string{"Authorization": "Bearer " + memberAuth.AccessToken}
+
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/guilds", dto.CreateGuildRequest{Name: "Channel Router Guild"}, ownerHdr)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var guild dto.GuildResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &guild))
+
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/guilds/"+guild.ID.String()+"/invites", nil, ownerHdr)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var inv dto.InviteResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &inv))
+
+	require.Equal(t, http.StatusOK, doJSONRequest(t, r, http.MethodPost, "/api/v1/invites/"+inv.Code+"/accept", nil, memberHdr).Code)
+
+	// Invalid UUID params -> 400
+	assert.Equal(t, http.StatusBadRequest, doJSONRequest(t, r, http.MethodGet, "/api/v1/guilds/not-a-uuid/channels", nil, ownerHdr).Code)
+	assert.Equal(t, http.StatusBadRequest, doJSONRequest(t, r, http.MethodPatch, "/api/v1/channels/not-a-uuid", map[string]any{"name": "x"}, ownerHdr).Code)
+
+	// List includes default #general
+	rec = doJSONRequest(t, r, http.MethodGet, "/api/v1/guilds/"+guild.ID.String()+"/channels", nil, memberHdr)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var list []dto.ChannelResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
+	require.Len(t, list, 1)
+	assert.Equal(t, "general", list[0].Name)
+
+	// Member create forbidden -> 403
+	assert.Equal(t, http.StatusForbidden, doJSONRequest(t, r, http.MethodPost, "/api/v1/guilds/"+guild.ID.String()+"/channels", dto.CreateChannelRequest{Name: "nope"}, memberHdr).Code)
+
+	// Owner creates channel -> 201
+	topic := "API discussion"
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/guilds/"+guild.ID.String()+"/channels", dto.CreateChannelRequest{Name: "backend", Topic: &topic}, ownerHdr)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var ch dto.ChannelResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ch))
+	assert.Equal(t, "backend", ch.Name)
+	require.NotNil(t, ch.Topic)
+	assert.Equal(t, topic, *ch.Topic)
+
+	// Duplicate channel name -> 409
+	assert.Equal(t, http.StatusConflict, doJSONRequest(t, r, http.MethodPost, "/api/v1/guilds/"+guild.ID.String()+"/channels", dto.CreateChannelRequest{Name: "backend"}, ownerHdr).Code)
+
+	// Owner updates and deletes channel -> 200 & 204
+	rec = doJSONRequest(t, r, http.MethodPatch, "/api/v1/channels/"+ch.ID.String(), map[string]any{"name": "api-core", "topic": nil}, ownerHdr)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ch))
+	assert.Equal(t, "api-core", ch.Name)
+	assert.Nil(t, ch.Topic)
+
+	assert.Equal(t, http.StatusNoContent, doJSONRequest(t, r, http.MethodDelete, "/api/v1/channels/"+ch.ID.String(), nil, ownerHdr).Code)
 }

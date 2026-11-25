@@ -55,6 +55,7 @@ func main() {
 
 	userRepo := postgres.NewUserRepository(pgPool)
 	guildRepo := postgres.NewGuildRepository(pgPool)
+	channelRepo := postgres.NewChannelRepository(pgPool)
 	inviteRepo := postgres.NewInviteRepository(pgPool)
 	tokenStore := redisstore.NewTokenStore(redisClient)
 	presenceStore := redisstore.NewPresenceStore(redisClient)
@@ -69,17 +70,19 @@ func main() {
 	authSvc := service.NewAuthService(userRepo, tokenStore, pwHasher, jwtMgr, cfg.RefreshTokenTTL)
 	guildSvc := service.NewGuildService(guildRepo, presenceStore, subMgr)
 	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, subMgr)
+	channelSvc := service.NewChannelService(guildRepo, channelRepo)
 
 	engine := router.New(router.Dependencies{
-		Config:           cfg,
-		Logger:           log,
-		TokenManager:     jwtMgr,
-		RateLimiter:      rateLimiter,
-		HealthController: controller.NewHealthController(pgHealth, redisHealth, log),
-		AuthController:   controller.NewAuthController(authSvc),
-		UserController:   controller.NewUserController(authSvc, middleware.GetUserID),
-		GuildController:  controller.NewGuildController(guildSvc, middleware.GetUserID),
-		InviteController: controller.NewInviteController(inviteSvc, middleware.GetUserID),
+		Config:            cfg,
+		Logger:            log,
+		TokenManager:      jwtMgr,
+		RateLimiter:       rateLimiter,
+		HealthController:  controller.NewHealthController(pgHealth, redisHealth, log),
+		AuthController:    controller.NewAuthController(authSvc),
+		UserController:    controller.NewUserController(authSvc, middleware.GetUserID),
+		GuildController:   controller.NewGuildController(guildSvc, middleware.GetUserID),
+		InviteController:  controller.NewInviteController(inviteSvc, middleware.GetUserID),
+		ChannelController: controller.NewChannelController(channelSvc, middleware.GetUserID),
 	})
 
 	srv := &http.Server{
