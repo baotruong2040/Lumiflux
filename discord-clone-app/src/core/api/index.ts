@@ -1,6 +1,7 @@
 export { authApi } from './authApi'
 export { channelApi } from './channelApi'
 export { guildApi } from './guildApi'
+export { messageApi } from './messageApi'
 export { configureHttpClientAuth, createHttpClient, httpClient } from './httpClient'
 export type {
   CreateHttpClientOptions,
@@ -20,12 +21,17 @@ export type {
   GuildMember,
   GuildRole,
   Invite,
+  ListMessagesParams,
   LoginRequest,
   LogoutRequest,
+  Message,
+  MessageAuthor,
   RefreshRequest,
   RegisterRequest,
+  SendMessageRequest,
   UpdateChannelRequest,
   UpdateGuildRequest,
+  UpdateMessageRequest,
   UpdateMeRequest,
   User,
 } from './types'

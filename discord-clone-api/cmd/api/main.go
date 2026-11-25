@@ -56,6 +56,7 @@ func main() {
 	userRepo := postgres.NewUserRepository(pgPool)
 	guildRepo := postgres.NewGuildRepository(pgPool)
 	channelRepo := postgres.NewChannelRepository(pgPool)
+	messageRepo := postgres.NewMessageRepository(pgPool)
 	inviteRepo := postgres.NewInviteRepository(pgPool)
 	tokenStore := redisstore.NewTokenStore(redisClient)
 	presenceStore := redisstore.NewPresenceStore(redisClient)
@@ -66,11 +67,21 @@ func main() {
 	pwHasher := hasher.NewBcryptHasher(cfg.BcryptCost)
 	jwtMgr := jwtutil.NewManager(cfg.JWTSecret, cfg.AccessTokenTTL)
 	subMgr := domain.NoopGuildSubscriptionManager{}
+	msgPublisher := domain.NoopMessageEventPublisher{}
 
 	authSvc := service.NewAuthService(userRepo, tokenStore, pwHasher, jwtMgr, cfg.RefreshTokenTTL)
 	guildSvc := service.NewGuildService(guildRepo, presenceStore, subMgr)
 	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, subMgr)
 	channelSvc := service.NewChannelService(guildRepo, channelRepo)
+	messageSvc := service.NewMessageService(
+		guildRepo,
+		channelRepo,
+		messageRepo,
+		rateLimiter,
+		msgPublisher,
+		cfg.MessageRateLimit,
+		cfg.MessageRateWindow,
+	)
 
 	engine := router.New(router.Dependencies{
 		Config:            cfg,
@@ -83,6 +94,7 @@ func main() {
 		GuildController:   controller.NewGuildController(guildSvc, middleware.GetUserID),
 		InviteController:  controller.NewInviteController(inviteSvc, middleware.GetUserID),
 		ChannelController: controller.NewChannelController(channelSvc, middleware.GetUserID),
+		MessageController: controller.NewMessageController(messageSvc, middleware.GetUserID),
 	})
 
 	srv := &http.Server{

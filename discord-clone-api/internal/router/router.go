@@ -23,6 +23,7 @@ type Dependencies struct {
 	GuildController   *controller.GuildController
 	InviteController  *controller.InviteController
 	ChannelController *controller.ChannelController
+	MessageController *controller.MessageController
 }
 
 // New constructs and configures the Gin engine with middlewares and v1 routes.
@@ -95,11 +96,19 @@ func New(deps Dependencies) *gin.Engine {
 		}
 	}
 
-	if deps.ChannelController != nil {
+	if deps.ChannelController != nil || deps.MessageController != nil {
 		channels := v1.Group("/channels", middleware.Auth(deps.TokenManager))
 		{
-			channels.PATCH("/:channelId", deps.ChannelController.Update)
-			channels.DELETE("/:channelId", deps.ChannelController.Delete)
+			if deps.ChannelController != nil {
+				channels.PATCH("/:channelId", deps.ChannelController.Update)
+				channels.DELETE("/:channelId", deps.ChannelController.Delete)
+			}
+			if deps.MessageController != nil {
+				channels.GET("/:channelId/messages", deps.MessageController.List)
+				channels.POST("/:channelId/messages", deps.MessageController.Send)
+				channels.PATCH("/:channelId/messages/:messageId", deps.MessageController.Update)
+				channels.DELETE("/:channelId/messages/:messageId", deps.MessageController.Delete)
+			}
 		}
 	}
 

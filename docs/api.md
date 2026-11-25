@@ -434,7 +434,75 @@ Xóa kênh khỏi server, chỉ `owner` hoặc `admin`.
 
 ---
 
-## 7. Biến môi trường cấu hình (`internal/config`)
+## 7. Message (Tin nhắn & Cursor Pagination)
+
+Tất cả endpoint nhóm Message yêu cầu `Authorization: Bearer <accessToken>` và xác thực tư cách thành viên của guild chứa kênh.
+
+### 7.1. `GET /api/v1/channels/:channelId/messages`
+Tải lịch sử tin nhắn chưa bị xóa mềm (`deleted_at IS NULL`) bằng cursor pagination theo `UUIDv7` giảm dần (`WHERE channel_id = $1 AND id < $before ORDER BY id DESC LIMIT $limit`).
+
+**Query Parameters:**
+- `before` *(tùy chọn, UUID)*: ID của tin nhắn cũ nhất ở trang trước; bỏ qua để lấy trang mới nhất.
+- `limit` *(tùy chọn, số nguyên `1–100`, mặc định `50`)*.
+
+**Response `200 OK`:** Mảng đối tượng `Message`:
+```json
+[
+  {
+    "id": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a70",
+    "channelId": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a6d",
+    "author": {
+      "id": "0196a1b2-3c4d-7e8f-9a0b-1c2d3e4f5a6b",
+      "username": "truong",
+      "displayName": "Truong",
+      "avatarUrl": null
+    },
+    "content": "Xin chào mọi người!",
+    "nonce": null,
+    "editedAt": null,
+    "createdAt": "2026-11-25T15:00:00Z"
+  }
+]
+```
+
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 CHANNEL_NOT_FOUND`.
+
+### 7.2. `POST /api/v1/channels/:channelId/messages`
+Gửi tin nhắn mới kèm kiểm tra độ dài sau `TrimSpace` (`1–2.000` ký tự Unicode), tùy chọn `nonce` (tối đa `64` ký tự), và giới hạn tốc độ theo user trên Redis (`rl:{userID}:msg`, mặc định `30` tin / `10` giây).
+
+**Request Body:**
+```json
+{
+  "content": "Xin chào mọi người!",
+  "nonce": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Response `201 Created`:** Đối tượng `Message` (trả lại `nonce` khớp từ request).  
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 CHANNEL_NOT_FOUND`, `429 RATE_LIMITED` (kèm header `Retry-After`).
+
+### 7.3. `PATCH /api/v1/channels/:channelId/messages/:messageId`
+Sửa nội dung tin nhắn và cập nhật `editedAt`; chỉ **tác giả** tin nhắn được phép thực hiện.
+
+**Request Body:**
+```json
+{
+  "content": "Nội dung đã cập nhật"
+}
+```
+
+**Response `200 OK`:** Đối tượng `Message` với `editedAt != null`.  
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 CHANNEL_NOT_FOUND` / `MESSAGE_NOT_FOUND`.
+
+### 7.4. `DELETE /api/v1/channels/:channelId/messages/:messageId`
+Xóa mềm tin nhắn (`deleted_at = now()`); cho phép **tác giả** hoặc **`owner`/`admin`** của guild.
+
+**Response `204 No Content`** (không có body).  
+**Lỗi có thể trả về:** `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 CHANNEL_NOT_FOUND` / `MESSAGE_NOT_FOUND`.
+
+---
+
+## 8. Biến môi trường cấu hình (`internal/config`)
 
 | Biến | Mặc định (Dev) | Mô tả |
 | :--- | :--- | :--- |
@@ -453,11 +521,13 @@ Xóa kênh khỏi server, chỉ `owner` hoặc `admin`.
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173,tauri://localhost,http://tauri.localhost,https://tauri.localhost` | Danh sách origin cho phép, ngăn cách bằng dấu phẩy. |
 | `LOGIN_RATE_LIMIT` | `10` | Số lần đăng nhập tối đa trong mỗi cửa sổ/IP. |
 | `LOGIN_RATE_WINDOW` | `1m` | Độ dài cửa sổ rate limit đăng nhập. |
+| `MESSAGE_RATE_LIMIT` | `30` | Số tin nhắn tối đa trong mỗi cửa sổ/user. |
+| `MESSAGE_RATE_WINDOW` | `10s` | Độ dài cửa sổ rate limit gửi tin nhắn. |
 | `SHUTDOWN_TIMEOUT` | `10s` | Thời gian tối đa chờ graceful shutdown. |
 
 ---
 
-## 8. Trạng thái triển khai theo hợp đồng `openapi.yaml`
+## 9. Trạng thái triển khai theo hợp đồng `openapi.yaml`
 
 | Nhóm API | Endpoint | Trạng thái |
 | :--- | :--- | :--- |
@@ -466,5 +536,5 @@ Xóa kênh khỏi server, chỉ `owner` hoặc `admin`.
 | **Users** | `GET /api/v1/users/@me`, `PATCH /api/v1/users/@me` | Đã triển khai |
 | **Guilds & Invites** | `/api/v1/guilds/**`, `/api/v1/invites/{code}/accept` | Đã triển khai |
 | **Channels** | `/api/v1/guilds/{guildId}/channels`, `/api/v1/channels/{channelId}` | Đã triển khai |
-| **Messages** | `/api/v1/channels/{channelId}/messages/**` | Kế hoạch (Ngày 10) |
+| **Messages** | `/api/v1/channels/{channelId}/messages/**` | Đã triển khai |
 | **WebSocket** | `POST /api/v1/ws/ticket`, `GET /ws?ticket=...` | Kế hoạch (Ngày 12–13) |

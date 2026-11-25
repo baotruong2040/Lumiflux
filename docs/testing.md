@@ -37,7 +37,7 @@
 | `TC-GLD-03` | `Member` tạo mã mời và tài khoản khác nhập mã mời | Tham gia server thành công; danh sách thành viên tự cập nhật qua `GUILD_MEMBER_ADD`. | `[ ]` *(REST/DB pass; chờ WS `GUILD_MEMBER_ADD` Ngày 12–13)* |
 | `TC-GLD-04` | Nhập mã mời đã hết hạn hoặc hết `max_uses` | Từ chối `400` với `INVITE_EXPIRED` hoặc `INVITE_EXHAUSTED`. | `[x]` |
 | `TC-GLD-05` | Thành viên rời server khi tab đang mở (ADR-007) | Tab đó không còn nhận `MESSAGE_CREATE` của server cũ; những người còn lại nhận `GUILD_MEMBER_REMOVE`. | `[ ]` |
-| `TC-GLD-06` | Gán `admin` bằng SQL, rồi `POST` kênh và xóa tin của `member` | Thành công; `member` thường vẫn bị `403`. | `[ ]` |
+| `TC-GLD-06` | Gán `admin` bằng SQL, rồi `POST` kênh và xóa tin của `member` | Thành công; `member` thường vẫn bị `403`. | `[x]` |
 | `TC-GLD-07` | `Owner` xóa server khi thành viên khác đang online | Client kia nhận `GUILD_DELETE`, server biến mất khỏi thanh bên, không cần F5. | `[ ]` |
 | `TC-CHN-01` | `Member` thường gọi `POST` hoặc `DELETE` channel | Từ chối với mã `403 FORBIDDEN`. | `[x]` |
 | `TC-CHN-02` | `Owner`/`Admin` tạo 2 kênh trùng tên trong cùng server | Từ chối với mã `409 Conflict`. | `[x]` |
@@ -45,10 +45,10 @@
 ### 2.3. Message & Cursor Pagination
 | Mã TC | Kịch bản kiểm thử | Kết quả kỳ vọng | Trạng thái |
 | :--- | :--- | :--- | :--- |
-| `TC-MSG-01` | Gửi tin nhắn rỗng (`"   "`) hoặc dài > 2.000 ký tự | Từ chối với mã `400 Bad Request`. | `[ ]` |
-| `TC-MSG-02` | Tải lịch sử với 1.000 tin nhắn seed sẵn | Cuộn lên trên tải từng trang 50 tin qua `?before=<id>`, không trùng và không sót tin. | `[ ]` |
-| `TC-MSG-03` | Tác giả sửa tin nhắn; `Admin` xóa tin nhắn của `Member` | Cập nhật `edited_at` / `deleted_at` và phát `MESSAGE_UPDATE` / `MESSAGE_DELETE` tới các client. | `[ ]` |
-| `TC-MSG-04` | Một user gửi 31 tin trong 10 giây | Tin thứ 31 nhận `429 RATE_LIMITED`; 30 tin trước đó không bị ảnh hưởng. | `[ ]` |
+| `TC-MSG-01` | Gửi tin nhắn rỗng (`"   "`) hoặc dài > 2.000 ký tự | Từ chối với mã `400 Bad Request`. | `[x]` |
+| `TC-MSG-02` | Tải lịch sử với 1.000 tin nhắn seed sẵn | Cuộn lên trên tải từng trang 50 tin qua `?before=<id>`, không trùng và không sót tin. | `[x]` |
+| `TC-MSG-03` | Tác giả sửa tin nhắn; `Admin` xóa tin nhắn của `Member` | Cập nhật `edited_at` / `deleted_at` và phát `MESSAGE_UPDATE` / `MESSAGE_DELETE` tới các client. | `[ ]` *(REST/DB & UI reload pass; chờ WS broadcast Ngày 12–13)* |
+| `TC-MSG-04` | Một user gửi 31 tin trong 10 giây | Tin thứ 31 nhận `429 RATE_LIMITED`; 30 tin trước đó không bị ảnh hưởng. | `[x]` |
 
 ### 2.4. WebSocket Realtime, Resync & Presence
 | Mã TC | Kịch bản kiểm thử | Kết quả kỳ vọng | Trạng thái |
@@ -64,8 +64,8 @@
 ### 2.5. Giao diện & Đa nền tảng (Web + Tauri 2)
 | Mã TC | Kịch bản kiểm thử | Kết quả kỳ vọng | Trạng thái |
 | :--- | :--- | :--- | :--- |
-| `TC-UI-01` | Gõ tiếng Việt có dấu (Telex và VNI) trong ô nhập tin | Không mất dấu, không gửi nhầm tin khi đang gõ tổ hợp phím. | `[ ]` |
-| `TC-UI-02` | Gửi chuỗi 2.000 ký tự không dấu cách hoặc URL rất dài | Tự động xuống dòng (`overflow-wrap: anywhere`), không làm vỡ layout khung chat. | `[ ]` |
+| `TC-UI-01` | Gõ tiếng Việt có dấu (Telex và VNI) trong ô nhập tin | Không mất dấu, không gửi nhầm tin khi đang gõ tổ hợp phím. | `[x]` *(đã kiểm gửi/hiển thị đủ dấu tiếng Việt qua Web E2E + cài guard `isComposing`/`keyCode === 229`; kiểm tra bộ gõ IME OS thực tế nếu cần thêm bằng tay)* |
+| `TC-UI-02` | Gửi chuỗi 2.000 ký tự không dấu cách hoặc URL rất dài | Tự động xuống dòng (`overflow-wrap: anywhere`), không làm vỡ layout khung chat. | `[x]` |
 | `TC-UI-03` | Chạy song song Web (`localhost:5173`) và Tauri ở cả hai chế độ: `tauri dev` (origin `http://localhost:5173`) và bản `tauri build` (origin `tauri://localhost`) | Không gặp lỗi CORS ở cả REST lẫn WebSocket `CheckOrigin`. | `[ ]` |
 | `TC-UI-04` | Đo độ tương phản chữ/nền của dark theme bằng Chrome DevTools | Đạt tối thiểu 4,5:1 (WCAG AA). | `[ ]` |
 

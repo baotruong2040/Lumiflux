@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Sentinel errors representing domain-level failure categories.
@@ -20,9 +21,10 @@ var (
 
 // Error pairs a machine-readable API error code and message with a sentinel error.
 type Error struct {
-	Code    string
-	Message string
-	Err     error
+	Code       string
+	Message    string
+	RetryAfter time.Duration
+	Err        error
 }
 
 // Error implements the error interface.
@@ -44,5 +46,15 @@ func NewError(sentinel error, code, message string) *Error {
 		Code:    code,
 		Message: message,
 		Err:     sentinel,
+	}
+}
+
+// NewRateLimitError creates a rate-limit domain Error with an optional RetryAfter duration.
+func NewRateLimitError(retryAfter time.Duration, message string) *Error {
+	return &Error{
+		Code:       "RATE_LIMITED",
+		Message:    message,
+		RetryAfter: retryAfter,
+		Err:        ErrRateLimited,
 	}
 }

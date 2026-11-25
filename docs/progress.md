@@ -2,7 +2,7 @@
 
 - **Khung thời gian triển khai:** 16/11/2026 – 29/11/2026 (14 ngày)
 - **Cập nhật lần cuối:** 25/11/2026
-- **Trạng thái tổng thể:** Đã hoàn thành Ngày 1, Ngày 2, Ngày 4, Ngày 5, Ngày 6, Ngày 7, Ngày 8 và Ngày 9 (Channel Backend & 3-Column Dark Mode UI); còn bước xác nhận tương tác trực tiếp trên cửa sổ Desktop GUI Ngày 3 (`npx tauri dev` đã biên dịch và chạy process `app.exe` + WebView2) và chuyển sang Ngày 10 (Message Backend & Cursor Pagination).
+- **Trạng thái tổng thể:** Đã hoàn thành Ngày 1, Ngày 2, Ngày 4, Ngày 5, Ngày 6, Ngày 7, Ngày 8, Ngày 9, Ngày 10 (Message Backend & Cursor Pagination) và Ngày 11 (Chat UI REST, Optimistic Update & 1.000-message Pagination); còn bước xác nhận tương tác trực tiếp trên cửa sổ Desktop GUI Ngày 3 và chuyển sang Ngày 12 (WebSocket Hub).
 
 ---
 
@@ -19,8 +19,8 @@
 | **Ngày 7** | Authentication Frontend & Route Guard (Web + Tauri) | **Hoàn thành** | Dựng `tokens.css` (`discord-night`), `StorageAdapter`, `httpClient` auto-refresh `401`, `useAuthStore`, `RouteGuards`, `LoginPage`/`RegisterPage`; `npm run lint` & `npm run build` xanh, E2E Web (`TC-AUTH-05` + F5 giữ phiên) pass, `cargo check` Tauri shell xanh. |
 | **Ngày 8** | Guild, Membership & Invite Backend | **Hoàn thành** | Hoàn thiện `GuildService`, `InviteService`, `GuildRepository`/`InviteRepository` (transaction + `FOR UPDATE`), `PresenceStore`, hook `Unsubscribe` (ADR-007); `TC-GLD-01..04` + `go vet ./...` + `go test -race ./...` xanh. |
 | **Ngày 9** | Channel Backend & Giao diện Main Layout (Server/Channel) | **Hoàn thành** | Hoàn thiện `ChannelService`, `ChannelController`, `ChannelRepository` (`403` member, `409` trùng tên); dựng layout 3 cột Dark Mode + đầy đủ modal Server/Invite/Channel; `TC-CHN-01..02` + `go test -race ./...` + `npm run lint` (`0 warnings`) + `npm run build` + Web E2E 2 tài khoản + `npx tauri dev` launch pass. |
-| **Ngày 10** | Message Backend & Cursor Pagination theo UUIDv7 | **Kế hoạch** | Chưa bắt đầu. |
-| **Ngày 11** | Chat UI & Optimistic Update (`nonce`) | **Kế hoạch** | Chưa bắt đầu. |
+| **Ngày 10** | Message Backend & Cursor Pagination theo UUIDv7 | **Hoàn thành** | Hoàn thiện `MessageRepository`, `MessageService` (rate limit `rl:{userID}:msg` `30/10s`, `nonce`, cursor pagination, RBAC sửa/xóa mềm), `MessageController`, `cmd/seed`; `TC-MSG-01..04`, `TC-GLD-06` + `go test -race ./...` xanh. |
+| **Ngày 11** | Chat UI & Optimistic Update (`nonce`) | **Hoàn thành** | Hoàn thiện `messageApi`, `useChannelMessages`, `MessageList`, `MessageComposer`; `npm run lint` (`0 warnings`), `npm run build`, `cargo check` xanh; Web E2E trên 1.000 tin nhắn seed pass (`TC-MSG-02`, `TC-UI-01..02`, sửa/xóa & F5). |
 | **Ngày 12** | WebSocket Gateway Backend (`Hub`, `Client`, `Ticket` dùng 1 lần) | **Kế hoạch** | Chưa bắt đầu. |
 | **Ngày 13** | Kết nối Redis Pub/Sub & Frontend Realtime (`GatewayClient`, `RESYNC`) | **Kế hoạch** | Chưa bắt đầu. |
 | **Ngày 14** | Hoàn thiện nhóm `Should`, kiểm thử toàn luồng, đóng gói & tài liệu hóa | **Kế hoạch** | Chưa bắt đầu. |
@@ -71,9 +71,21 @@
   - `npm run lint` (`oxlint`): `0 warnings, 0 errors` (27 file).
   - `npm run build` (`tsc -b && vite build`): build thành công (`dist/`).
   - Web Browser E2E (`http://localhost:5173`): pass 10/10 bước với 2 tài khoản (`Owner` tạo server, tạo/chuyển kênh, F5 giữ phiên & kênh, kiểm tra `409` trùng tên, sửa kênh, tạo mã mời; `Member` tham gia bằng mã mời, xác minh ẩn nút quản trị kênh & chỉ có "Rời server", rời server; `Owner` xóa kênh & xóa server), 0 lỗi console/CORS.
-  - Desktop (`discord-clone-app/src-tauri/`): `cargo check` pass; `npx tauri dev` biên dịch xong trong `20.32s` và khởi chạy `target\debug\app.exe` cùng tiến trình WebView2.
+  - Desktop (`discord-clone-app/src-tauri/`): `cargo check` pass; `npx tauri dev` biên dịch thành công (`20.32s`) và khởi chạy `target\debug\app.exe` cùng tiến trình WebView2.
+
+### Mốc Ngày 10 & Ngày 11 — Message Backend, Cursor Pagination & Chat UI (25/11/2026)
+- **Backend (`discord-clone-api/`):**
+  - Bổ sung `domain.Message`, `domain.MessageEventPublisher`, `domain.NewRateLimitError`, `postgres.MessageRepository`, `service.MessageService`, `controller.MessageController`, DTO, route `/api/v1/channels/:channelId/messages/**`, `MESSAGE_RATE_LIMIT`/`MESSAGE_RATE_WINDOW` trong `internal/config`, và CLI `cmd/seed`.
+  - `go list` trên `internal/domain` và `internal/service` giữ nguyên không có phụ thuộc framework/driver.
+  - `go vet ./...` và `go test -race -count=1 ./...` pass toàn bộ package (`config`, `logger`, `idgen`, `hasher`, `jwtutil`, `service`, `router`, `integration`).
+  - Integration test thật (`RUN_INTEGRATION_TESTS=1 go test -v -race -count=1 ./internal/integration/...`): **17/17 pass** (`Readyz`, `TC-AUTH-01..06`, `TC-CHN-01..02`, `TC-GLD-01..04`, `TC-GLD-06`, `TC-MSG-01..04`, gồm seed 1.000 tin nhắn và đọc hết 20 trang `limit=50` không trùng/sót).
+- **Frontend (`discord-clone-app/`):**
+  - Bổ sung `messageApi`, `useChannelMessages` (`useInfiniteQuery` + optimistic `nonce` upsert/resolve/fail/retry), `MessageList` (auto scroll-up pagination giữ nguyên vị trí cuộn, sửa inline & `(đã chỉnh sửa)`, xóa mềm kèm modal xác nhận, `overflow-wrap: anywhere`), `MessageComposer` (guard `isComposing`/`keyCode === 229` cho bộ gõ tiếng Việt).
+  - `npm run lint` (`oxlint`): `0 warnings, 0 errors` (33 file); `npm run build`: build thành công (`dist/`); `cargo check`: thành công.
+  - Unit test helper (`message_ui_test.ts`): `2/2` pass (`flattenPagesChronologically` và optimistic cache transforms).
+  - Web Browser E2E (`http://127.0.0.1:5173/`): seed 1.000 tin nhắn qua `cmd/seed`, cuộn lên tải 4 trang cũ (`#1000` xuống `#0751`) không trùng/sót và giữ vị trí cuộn, gửi tin tiếng Việt có dấu + F5 giữ nguyên, gửi chuỗi 2.000 ký tự `'A'` không tràn layout (`fitsInsideContainerWidth: true`), sửa hiện `(đã chỉnh sửa)` & xóa mềm biến mất cả sau F5, 0 lỗi console/CORS.
 
 ---
 
 ## 3. Việc cần làm tiếp theo
-Bắt đầu **Ngày 10**: Xây dựng **Message Backend & Cursor Pagination theo UUIDv7** (`POST/GET /channels/:channelId/messages`, `PATCH/DELETE /channels/:channelId/messages/:messageId`, rate limit `rl:{userID}:msg`), sau đó tiếp tục **Ngày 11 (Chat UI)** và **Ngày 12–13 (WebSocket Hub & Realtime)**.
+Bắt đầu **Ngày 12**: Xây dựng **WebSocket Backend** (`POST /api/v1/ws/ticket` với Redis `GETDEL`, `Hub` actor model, `Client` `readPump`/`writePump`, `READY`, `HEARTBEAT`/`HEARTBEAT_ACK`, slow consumer `4002`, kiểm tra `goleak` và `TC-HUB-01..04`).

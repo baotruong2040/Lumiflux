@@ -83,3 +83,12 @@ type GuildSubscriptionManager interface {
 type PresenceReader interface {
 	GetOnlineMap(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 }
+
+// MessageRepository defines persistence operations for channel messages.
+type MessageRepository interface {
+	Create(ctx context.Context, msg *Message) (*Message, error)
+	ListByChannel(ctx context.Context, channelID uuid.UUID, before *uuid.UUID, limit int) ([]Message, error)
+	GetByID(ctx context.Context, messageID uuid.UUID) (*Message, error)
+	UpdateContent(ctx context.Context, messageID uuid.UUID, content string) (*Message, error)
+	SoftDelete(ctx context.Context, messageID uuid.UUID) error
+}

@@ -31,6 +31,8 @@ type Config struct {
 	CORSAllowedOrigins []string
 	LoginRateLimit     int
 	LoginRateWindow    time.Duration
+	MessageRateLimit   int
+	MessageRateWindow  time.Duration
 	ShutdownTimeout    time.Duration
 }
 
@@ -75,6 +77,14 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	messageRateLimit, err := getEnvInt("MESSAGE_RATE_LIMIT", 30)
+	if err != nil {
+		return nil, err
+	}
+	messageRateWindow, err := getEnvDuration("MESSAGE_RATE_WINDOW", 10*time.Second)
+	if err != nil {
+		return nil, err
+	}
 	shutdownTimeout, err := getEnvDuration("SHUTDOWN_TIMEOUT", 10*time.Second)
 	if err != nil {
 		return nil, err
@@ -102,6 +112,8 @@ func Load() (*Config, error) {
 		CORSAllowedOrigins: getEnvCSV("CORS_ALLOWED_ORIGINS", []string{"http://localhost:5173", "http://127.0.0.1:5173", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"}),
 		LoginRateLimit:     loginRateLimit,
 		LoginRateWindow:    loginRateWindow,
+		MessageRateLimit:   messageRateLimit,
+		MessageRateWindow:  messageRateWindow,
 		ShutdownTimeout:    shutdownTimeout,
 	}
 
@@ -147,6 +159,12 @@ func (c *Config) validate() error {
 	}
 	if c.LoginRateWindow <= 0 {
 		return errors.New("LOGIN_RATE_WINDOW must be positive")
+	}
+	if c.MessageRateLimit <= 0 {
+		return errors.New("MESSAGE_RATE_LIMIT must be positive")
+	}
+	if c.MessageRateWindow <= 0 {
+		return errors.New("MESSAGE_RATE_WINDOW must be positive")
 	}
 	if c.ShutdownTimeout <= 0 {
 		return errors.New("SHUTDOWN_TIMEOUT must be positive")

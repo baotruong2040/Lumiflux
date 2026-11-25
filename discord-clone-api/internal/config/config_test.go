@@ -27,6 +27,8 @@ func TestLoad_DefaultsAndEnvOverrides(t *testing.T) {
 	assert.Equal(t, 10, cfg.BcryptCost)
 	assert.Equal(t, 10, cfg.LoginRateLimit)
 	assert.Equal(t, time.Minute, cfg.LoginRateWindow)
+	assert.Equal(t, 30, cfg.MessageRateLimit)
+	assert.Equal(t, 10*time.Second, cfg.MessageRateWindow)
 	assert.Equal(t, []string{"http://localhost:5173", "tauri://localhost"}, cfg.CORSAllowedOrigins)
 }
 

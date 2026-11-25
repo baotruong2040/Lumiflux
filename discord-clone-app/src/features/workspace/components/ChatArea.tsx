@@ -1,8 +1,13 @@
-import type { Channel, Guild, GuildMember, GuildRole } from '../../../core/api'
+import type { Channel, Guild, GuildMember, GuildRole, User } from '../../../core/api'
+import { MessageComposer } from '../../chat/components/MessageComposer'
+import { MessageList } from '../../chat/components/MessageList'
+import '../../chat/components/ChatStyles.css'
+import { useChannelMessages } from '../../chat/hooks/useChannelMessages'
 import { getInitials } from '../utils/workspaceHelpers'
-import { EditIcon, HashIcon, PlusIcon, UserPlusIcon, UsersIcon } from './Icons'
+import { HashIcon, PlusIcon, UserPlusIcon, UsersIcon } from './Icons'
 
 export interface ChatAreaProps {
+  currentUser: User | null
   activeGuild: Guild | null
   activeChannel: Channel | null
   role: GuildRole | null
@@ -25,6 +30,7 @@ const ROLE_LABELS: Record<GuildRole, string> = {
 }
 
 export function ChatArea({
+  currentUser,
   activeGuild,
   activeChannel,
   role,
@@ -40,6 +46,7 @@ export function ChatArea({
   onOpenEditChannel,
 }: ChatAreaProps) {
   const canManageChannels = role === 'owner' || role === 'admin'
+  const chat = useChannelMessages(activeChannel?.id ?? null, currentUser)
 
   if (!activeGuild) {
     return (
@@ -122,7 +129,11 @@ export function ChatArea({
                   : 'Vui lòng chờ Owner hoặc Admin tạo kênh trong server này.'}
               </p>
               {canManageChannels && (
-                <button type="button" className="ws-btn ws-btn-primary ws-btn-icon-text" onClick={onOpenCreateChannel}>
+                <button
+                  type="button"
+                  className="ws-btn ws-btn-primary ws-btn-icon-text"
+                  onClick={onOpenCreateChannel}
+                >
                   <PlusIcon width={16} height={16} />
                   <span>Tạo kênh văn bản</span>
                 </button>
@@ -130,40 +141,33 @@ export function ChatArea({
             </div>
           ) : (
             <>
-              <div className="ws-channel-hero-scroll">
-                <div className="ws-channel-hero">
-                  <div className="ws-channel-hero-icon">
-                    <HashIcon width={32} height={32} />
-                  </div>
-                  <h2 className="ws-channel-hero-title">Chào mừng đến với #{activeChannel.name}!</h2>
-                  <p className="ws-channel-hero-desc">
-                    {activeChannel.topic
-                      ? activeChannel.topic
-                      : `Đây là điểm khởi đầu của kênh #${activeChannel.name} thuộc server ${activeGuild.name}.`}
-                  </p>
-                  <div className="ws-channel-hero-meta">
-                    <span>Vai trò của bạn: {role ? ROLE_LABELS[role] : 'Member'}</span>
-                    {canManageChannels && (
-                      <button
-                        type="button"
-                        className="ws-inline-link-btn"
-                        onClick={() => onOpenEditChannel(activeChannel)}
-                      >
-                        <EditIcon />
-                        <span>Chỉnh sửa kênh</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
+              <MessageList
+                key={activeChannel.id}
+                guildName={activeGuild.name}
+                channel={activeChannel}
+                currentUser={currentUser}
+                role={role}
+                messages={chat.messages}
+                isLoading={chat.isLoading}
+                isError={chat.isError}
+                error={chat.error}
+                hasNextPage={chat.hasNextPage}
+                isFetchingNextPage={chat.isFetchingNextPage}
+                onFetchNextPage={chat.fetchNextPage}
+                onRetryLoad={chat.refetch}
+                onRetrySend={chat.retryMessage}
+                onDismissFailed={chat.dismissFailedMessage}
+                onEditMessage={chat.editMessage}
+                onDeleteMessage={chat.deleteMessage}
+                isDeleting={chat.isDeleting}
+                onOpenEditChannel={onOpenEditChannel}
+              />
 
-              <div className="ws-composer-bar">
-                <div className="ws-composer-preview" aria-label="Ô nhập tin nhắn sắp ra mắt">
-                  <span className="ws-composer-placeholder">
-                    Nhắn tin vào #{activeChannel.name} (sẽ mở khóa ở bước Message REST &amp; WebSocket)
-                  </span>
-                </div>
-              </div>
+              <MessageComposer
+                key={`composer-${activeChannel.id}`}
+                channelName={activeChannel.name}
+                onSendMessage={chat.sendMessage}
+              />
             </>
           )}
         </section>

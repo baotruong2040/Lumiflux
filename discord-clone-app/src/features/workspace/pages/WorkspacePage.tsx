@@ -285,6 +285,7 @@ export function WorkspacePage() {
       />
 
       <ChatArea
+        currentUser={user}
         activeGuild={activeGuild}
         activeChannel={activeChannel}
         role={currentRole}

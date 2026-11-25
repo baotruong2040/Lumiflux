@@ -103,6 +103,37 @@ export interface UpdateChannelRequest {
   topic?: string | null
 }
 
+export interface MessageAuthor {
+  id: string
+  username: string
+  displayName: string
+  avatarUrl: string | null
+}
+
+export interface Message {
+  id: string
+  channelId: string
+  author: MessageAuthor
+  content: string
+  nonce: string | null
+  editedAt: string | null
+  createdAt: string
+}
+
+export interface ListMessagesParams {
+  before?: string
+  limit?: number
+}
+
+export interface SendMessageRequest {
+  content: string
+  nonce?: string
+}
+
+export interface UpdateMessageRequest {
+  content: string
+}
+
 export interface ApiErrorEnvelope {
   error: {
     code: string

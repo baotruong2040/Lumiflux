@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -408,6 +409,98 @@ func (r *memoryChannelRepo) Delete(_ context.Context, channelID uuid.UUID) error
 	return nil
 }
 
+type memoryMessageRepo struct {
+	mu       sync.RWMutex
+	messages map[uuid.UUID]domain.Message
+	users    *memoryUserRepo
+}
+
+func newMemoryMessageRepo(users *memoryUserRepo) *memoryMessageRepo {
+	return &memoryMessageRepo{
+		messages: make(map[uuid.UUID]domain.Message),
+		users:    users,
+	}
+}
+
+func (r *memoryMessageRepo) Create(ctx context.Context, msg *domain.Message) (*domain.Message, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stored := *msg
+	stored.CreatedAt = time.Now().UTC()
+	if u, err := r.users.GetByID(ctx, msg.AuthorID); err == nil {
+		stored.Author = domain.MessageAuthor{
+			ID:          u.ID,
+			Username:    u.Username,
+			DisplayName: u.DisplayName,
+			AvatarURL:   u.AvatarURL,
+		}
+	}
+	r.messages[stored.ID] = stored
+	cp := stored
+	return &cp, nil
+}
+
+func (r *memoryMessageRepo) ListByChannel(_ context.Context, channelID uuid.UUID, before *uuid.UUID, limit int) ([]domain.Message, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]domain.Message, 0)
+	for _, m := range r.messages {
+		if m.ChannelID != channelID || m.DeletedAt != nil {
+			continue
+		}
+		if before != nil && bytes.Compare(m.ID[:], (*before)[:]) >= 0 {
+			continue
+		}
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return bytes.Compare(out[i].ID[:], out[j].ID[:]) > 0
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (r *memoryMessageRepo) GetByID(_ context.Context, messageID uuid.UUID) (*domain.Message, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m, ok := r.messages[messageID]
+	if !ok || m.DeletedAt != nil {
+		return nil, domain.NewError(domain.ErrNotFound, "MESSAGE_NOT_FOUND", "message not found")
+	}
+	cp := m
+	return &cp, nil
+}
+
+func (r *memoryMessageRepo) UpdateContent(_ context.Context, messageID uuid.UUID, content string) (*domain.Message, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	m, ok := r.messages[messageID]
+	if !ok || m.DeletedAt != nil {
+		return nil, domain.NewError(domain.ErrNotFound, "MESSAGE_NOT_FOUND", "message not found")
+	}
+	now := time.Now().UTC()
+	m.Content = content
+	m.EditedAt = &now
+	r.messages[messageID] = m
+	cp := m
+	return &cp, nil
+}
+
+func (r *memoryMessageRepo) SoftDelete(_ context.Context, messageID uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	m, ok := r.messages[messageID]
+	if !ok || m.DeletedAt != nil {
+		return domain.NewError(domain.ErrNotFound, "MESSAGE_NOT_FOUND", "message not found")
+	}
+	now := time.Now().UTC()
+	m.DeletedAt = &now
+	r.messages[messageID] = m
+	return nil
+}
+
 func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 	cfg := &config.Config{
 		AppEnv:             "test",
@@ -420,6 +513,8 @@ func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 		CORSAllowedOrigins: []string{"http://localhost:5173", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"},
 		LoginRateLimit:     10,
 		LoginRateWindow:    time.Minute,
+		MessageRateLimit:   30,
+		MessageRateWindow:  10 * time.Second,
 	}
 
 	log := logger.NewWithWriter(io.Discard, "error")
@@ -427,7 +522,9 @@ func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 	userRepo := newMemoryUserRepo()
 	guildRepo := newMemoryGuildRepo(userRepo)
 	channelRepo := newMemoryChannelRepo(guildRepo)
+	messageRepo := newMemoryMessageRepo(userRepo)
 	inviteRepo := newMemoryInviteRepo(guildRepo)
+	rateLimiter := newMemoryRateLimiter()
 
 	authSvc := service.NewAuthService(
 		userRepo,
@@ -439,18 +536,28 @@ func newTestRouter(pgErr, redisErr error) (*gin.Engine, *jwtutil.Manager) {
 	guildSvc := service.NewGuildService(guildRepo, nil, domain.NoopGuildSubscriptionManager{})
 	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, domain.NoopGuildSubscriptionManager{})
 	channelSvc := service.NewChannelService(guildRepo, channelRepo)
+	messageSvc := service.NewMessageService(
+		guildRepo,
+		channelRepo,
+		messageRepo,
+		rateLimiter,
+		domain.NoopMessageEventPublisher{},
+		cfg.MessageRateLimit,
+		cfg.MessageRateWindow,
+	)
 
 	r := New(Dependencies{
 		Config:            cfg,
 		Logger:            log,
 		TokenManager:      jwtMgr,
-		RateLimiter:       newMemoryRateLimiter(),
+		RateLimiter:       rateLimiter,
 		HealthController:  controller.NewHealthController(&stubHealthChecker{err: pgErr}, &stubHealthChecker{err: redisErr}, log),
 		AuthController:    controller.NewAuthController(authSvc),
 		UserController:    controller.NewUserController(authSvc, middleware.GetUserID),
 		GuildController:   controller.NewGuildController(guildSvc, middleware.GetUserID),
 		InviteController:  controller.NewInviteController(inviteSvc, middleware.GetUserID),
 		ChannelController: controller.NewChannelController(channelSvc, middleware.GetUserID),
+		MessageController: controller.NewMessageController(messageSvc, middleware.GetUserID),
 	})
 
 	return r, jwtMgr
@@ -752,4 +859,66 @@ func TestRouter_ChannelRoutes(t *testing.T) {
 	assert.Nil(t, ch.Topic)
 
 	assert.Equal(t, http.StatusNoContent, doJSONRequest(t, r, http.MethodDelete, "/api/v1/channels/"+ch.ID.String(), nil, ownerHdr).Code)
+}
+
+func TestRouter_MessageRoutes(t *testing.T) {
+	r, _ := newTestRouter(nil, nil)
+
+	rec := doJSONRequest(t, r, http.MethodPost, "/api/v1/auth/register", dto.RegisterRequest{
+		Username:    "m_owner",
+		Email:       "m_owner@example.com",
+		DisplayName: "Msg Owner",
+		Password:    "Password123!",
+	}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var ownerAuth dto.AuthResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ownerAuth))
+	ownerHdr := map[string]string{"Authorization": "Bearer " + ownerAuth.AccessToken}
+
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/guilds", dto.CreateGuildRequest{Name: "Msg Router Guild"}, ownerHdr)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var guild dto.GuildResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &guild))
+
+	rec = doJSONRequest(t, r, http.MethodGet, "/api/v1/guilds/"+guild.ID.String()+"/channels", nil, ownerHdr)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var channels []dto.ChannelResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &channels))
+	channelID := channels[0].ID
+
+	// Invalid cursor / limit / UUID checks -> 400
+	assert.Equal(t, http.StatusBadRequest, doJSONRequest(t, r, http.MethodGet, "/api/v1/channels/bad-uuid/messages", nil, ownerHdr).Code)
+	assert.Equal(t, http.StatusBadRequest, doJSONRequest(t, r, http.MethodGet, "/api/v1/channels/"+channelID.String()+"/messages?before=not-uuid", nil, ownerHdr).Code)
+	assert.Equal(t, http.StatusBadRequest, doJSONRequest(t, r, http.MethodGet, "/api/v1/channels/"+channelID.String()+"/messages?limit=101", nil, ownerHdr).Code)
+
+	// Send -> 201, Update -> 200, List -> 200, Delete -> 204
+	nonce := "n-1"
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/channels/"+channelID.String()+"/messages", dto.SendMessageRequest{
+		Content: "Hello router",
+		Nonce:   &nonce,
+	}, ownerHdr)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var msg dto.MessageResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &msg))
+	assert.Equal(t, "Hello router", msg.Content)
+	require.NotNil(t, msg.Nonce)
+	assert.Equal(t, "n-1", *msg.Nonce)
+
+	rec = doJSONRequest(t, r, http.MethodPatch, "/api/v1/channels/"+channelID.String()+"/messages/"+msg.ID.String(), dto.UpdateMessageRequest{
+		Content: "Updated router",
+	}, ownerHdr)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &msg))
+	assert.Equal(t, "Updated router", msg.Content)
+	assert.NotNil(t, msg.EditedAt)
+
+	assert.Equal(t, http.StatusNoContent, doJSONRequest(t, r, http.MethodDelete, "/api/v1/channels/"+channelID.String()+"/messages/"+msg.ID.String(), nil, ownerHdr).Code)
+
+	// 29 more messages succeed, 31st hits 429 RATE_LIMITED with Retry-After
+	for range 29 {
+		require.Equal(t, http.StatusCreated, doJSONRequest(t, r, http.MethodPost, "/api/v1/channels/"+channelID.String()+"/messages", dto.SendMessageRequest{Content: "ok"}, ownerHdr).Code)
+	}
+	rec = doJSONRequest(t, r, http.MethodPost, "/api/v1/channels/"+channelID.String()+"/messages", dto.SendMessageRequest{Content: "too many"}, ownerHdr)
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+	assert.NotEmpty(t, rec.Header().Get("Retry-After"))
 }
