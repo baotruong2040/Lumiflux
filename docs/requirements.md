@@ -2,7 +2,7 @@
 
 - **Dự án:** Discord Clone (Web + Desktop đa nền tảng)
 - **Thời gian triển khai (Sprint 14 ngày):** 16/11/2026 – 29/11/2026 *(nén từ lộ trình gốc 7 tuần)*
-- **Nền tảng phát triển:** CachyOS (Linux)
+- **Nền tảng phát triển:** CachyOS (Linux) / Windows 11
 - **Kiến trúc mục tiêu:** Go (Clean Architecture) + PostgreSQL + Redis + React/TypeScript + Tauri 2
 
 ---
@@ -32,6 +32,11 @@
 
 ## 2. Chi tiết Hành vi & Tiêu chí Nghiệm thu (Acceptance Criteria)
 
+### 2.0. Quy ước lỗi & giới hạn tốc độ
+
+- Mọi lỗi có dạng `{"error": {"code": "...", "message": "..."}}` với mã HTTP thuộc `400`, `401`, `403`, `404`, `409`, `429`.
+- Giới hạn tốc độ trả `429 RATE_LIMITED`: gửi tin tối đa 30 tin / 10 giây / người dùng (Redis `rl:{userID}:msg`, `INCR` + `EXPIRE 10`); đăng nhập tối đa 10 lần / phút / IP. Ngưỡng là đề xuất, chỉnh theo thực tế.
+
 ### 2.1. Authentication & User Profile
 | Hạng mục | Chi tiết |
 | :--- | :--- |
@@ -39,15 +44,15 @@
 | **Input** | `username` (duy nhất, không phân biệt hoa thường), `email` (duy nhất, không phân biệt hoa thường), `displayName`, `password`. |
 | **Điều kiện chấp nhận** | `username` và `email` chưa tồn tại trong bảng `users`; mật khẩu được băm bằng `bcrypt` trước khi lưu. |
 | **Thay đổi dữ liệu** | Tạo bản ghi `users` (ID `UUIDv7`); khi login/refresh lưu `refresh:{hash}` vào Redis với TTL 7 ngày và xóa hash cũ. |
-| **Lỗi cần từ chối** | `400` dữ liệu sai định dạng; `401` sai mật khẩu / token hết hạn / refresh token đã dùng; `409` trùng username hoặc email. |
+| **Lỗi cần từ chối** | `400` dữ liệu sai định dạng; `401` sai mật khẩu / token hết hạn / refresh token đã dùng; `409` trùng username hoặc email; `429` đăng nhập quá 10 lần/phút từ một IP. |
 | **Tiêu chí nghiệm thu** | - Không lưu mật khẩu thô trong DB.<br>- Refresh token cũ không thể dùng lại lần thứ 2.<br>- Frontend tự refresh token và gọi lại API gốc mượt mà trên cả Web và Tauri. |
 
 ### 2.2. Guild, Membership & Invite
 | Hạng mục | Chi tiết |
 | :--- | :--- |
 | **Actor** | Người dùng đã đăng nhập; phân quyền theo `owner`, `admin`, `member`. |
-| **Quy tắc nghiệp vụ** | - Tạo server thực hiện trong 1 DB Transaction: tạo `guilds` + tạo `channels` (`general`) + thêm `guild_members` (`role = 'owner'`).<br>- Mọi thành viên trong server đều có quyền tạo mã mời (`POST /guilds/:guildId/invites`).<br>- `Owner` **không được** gọi API rời server (`403 FORBIDDEN`); muốn thoát phải xóa server (`DELETE /guilds/:guildId`).<br>- Chỉ `Owner` được đổi tên/icon hoặc xóa server. |
-| **Lỗi cần từ chối** | `403` không phải thành viên hoặc không đủ quyền; `404` server/mã mời không tồn tại; `409` đã là thành viên; `410/400` mã mời hết hạn hoặc hết lượt `max_uses`. |
+| **Quy tắc nghiệp vụ** | - Tạo server thực hiện trong 1 DB Transaction: tạo `guilds` + tạo `channels` (`general`) + thêm `guild_members` (`role = 'owner'`).<br>- Mọi thành viên trong server đều có quyền tạo mã mời (`POST /guilds/:guildId/invites`).<br>- `Owner` **không được** gọi API rời server (`403 FORBIDDEN`); muốn thoát phải xóa server (`DELETE /guilds/:guildId`).<br>- Chỉ `Owner` được đổi tên/icon hoặc xóa server.<br>- Vai trò `admin` được gán trực tiếp trong DB (`UPDATE guild_members SET role = 'admin' ...`) trong sprint này; chưa có API đổi vai trò. |
+| **Lỗi cần từ chối** | `403` không phải thành viên hoặc không đủ quyền; `404` server/mã mời không tồn tại; `409` đã là thành viên; `400` mã mời hết hạn (`INVITE_EXPIRED`) hoặc hết lượt `max_uses` (`INVITE_EXHAUSTED`). |
 | **Tiêu chí nghiệm thu** | - Tạo server xong thấy ngay kênh `#general` và quyền `owner`.<br>- Tài khoản khác nhập mã mời tham gia được server; danh sách thành viên cập nhật ngay lập tức. |
 
 ### 2.3. Channel (Kênh văn bản)
@@ -62,9 +67,9 @@
 | Hạng mục | Chi tiết |
 | :--- | :--- |
 | **Actor** | Thành viên server chứa kênh đó. |
-| **Điều kiện chấp nhận** | Nội dung sau `TrimSpace` có độ dài từ `1` đến `2.000` ký tự. Kèm `nonce` (tối đa 64 ký tự) khi gửi mới. |
+| **Điều kiện chấp nhận** | Nội dung sau `TrimSpace` có độ dài từ `1` đến `2.000` ký tự. Kèm `nonce` (tối đa 64 ký tự) khi gửi mới. Vượt 30 tin / 10 giây thì trả `429`. |
 | **Thay đổi dữ liệu** | - **Gửi:** `INSERT` vào `messages` (`UUIDv7`), sau đó publish `MESSAGE_CREATE` lên Redis.<br>- **Sửa:** Chỉ tác giả được sửa; cập nhật `content` và `edited_at`, publish `MESSAGE_UPDATE`.<br>- **Xóa:** Tác giả hoặc `owner`/`admin` được xóa; cập nhật `deleted_at` (soft delete), publish `MESSAGE_DELETE`. |
-| **Tải lịch sử** | `GET /channels/:channelId/messages?before=<id>&limit=50` truy vấn `WHERE channel_id = $1 AND id < $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 50` kèm `JOIN users`. |
+| **Tải lịch sử** | `GET /channels/:channelId/messages?before=<id>&limit=50` truy vấn `WHERE channel_id = $1 AND id < $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 50` kèm `JOIN users`. Trang đầu (không có `before`) bỏ điều kiện `id < $2`; `limit` mặc định 50, tối đa 100 (khớp `openapi.yaml`). |
 | **Tiêu chí nghiệm thu** | - Gửi tin lạc quan (optimistic update) thay thế tin tạm bằng tin thật qua `nonce`, không bao giờ hiển thị trùng 2 tin.<br>- Cuộn lên trên tải thêm lịch sử mượt mà với dữ liệu 1.000 tin nhắn.<br>- Tin đã sửa hiện nhãn "(đã chỉnh sửa)", tin đã xóa biến mất khỏi khung chat của mọi client. |
 
 ### 2.5. Realtime Gateway, Typing & Presence
@@ -74,3 +79,6 @@
 | **Heartbeat & Reconnect** | Server gửi `heartbeatIntervalMs` (25.000 ms) trong `READY`. Client gửi `HEARTBEAT` định kỳ; nếu quá 10 giây không nhận `HEARTBEAT_ACK`, client chủ động ngắt và reconnect theo exponential backoff + jitter (tối đa 30s), xin vé mới và kích hoạt `RESYNC`. |
 | **Typing & Presence** | - `TYPING_START`: kiểm tra quyền thành viên, dùng `SET typing:{channelID}:{userID} 1 NX EX 3` trên Redis để chặn spam.<br>- `Presence`: mỗi `HEARTBEAT` gia hạn `SET presence:{userID} online EX 60`. |
 | **Tiêu chí nghiệm thu** | - Hai client chat qua lại nhận tin dưới 100 ms trên mạng nội bộ.<br>- Ngắt mạng 10 giây rồi bật lại: tự kết nối lại và đồng bộ đủ tin nhắn bị lỡ trong lúc rớt mạng.<br>- `go test -race ./...` không phát hiện data race hay rò rỉ goroutine. |
+| **RESYNC** | Từ lần `READY` thứ hai trở đi, client làm mất hiệu lực cache `['messages']` và tải lại từ REST; kết quả thay thế cache chứ không ghép, nên không cần tham số `after`. Tải lại cả danh sách thành viên để lấy lại trạng thái online (bổ sung so với kế hoạch gốc). |
+| **Presence offline** | Hub giữ map `users` (user → các kết nối). Khi kết nối cuối cùng của một user đóng, Hub phát `PRESENCE_UPDATE` `offline` tới các guild của user đó; mở hai tab thì chỉ offline khi đóng tab cuối. Key `presence:{userID}` (TTL 60 giây) là dự phòng cho `GET /guilds/:guildId/members` khi server chết đột ngột. Với 2 instance, user nối ở cả hai có thể bị báo offline sớm tới nhịp heartbeat kế tiếp (≤ 25 giây): chấp nhận. |
+| **Origin được phép** | CORS và `CheckOrigin` cho `http://localhost:5173`, `tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`. |

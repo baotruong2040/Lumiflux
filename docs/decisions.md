@@ -14,7 +14,7 @@ Tài liệu này ghi lại toàn bộ các quyết định đã được chốt 
 
 ## ADR-002: Định danh UUIDv7 và phân trang Cursor
 - **Trạng thái:** Đã chốt
-- **Quyết định:** Sinh khóa chính `UUIDv7` ở tầng Go (`google/uuid`) cho các bảng chính; phân trang lịch sử tin nhắn dùng cursor theo `id` (`WHERE channel_id = $1 AND id < $2 ORDER BY id DESC LIMIT 50`) thay vì `OFFSET`.
+- **Quyết định:** Sinh khóa chính `UUIDv7` ở tầng Go (`google/uuid`) cho các bảng chính; phân trang lịch sử tin nhắn dùng cursor theo `id` (`WHERE channel_id = $1 AND id < $2 AND deleted_at IS NULL ORDER BY id DESC LIMIT 50`) thay vì `OFFSET`; trang đầu (không có `before`) bỏ điều kiện `id < $2`.
 - **Lý do:** `UUIDv7` chứa timestamp ở các bit đầu nên sắp xếp tự nhiên theo thời gian, giúp truy vấn trên index `(channel_id, id DESC)` đạt tốc độ $O(\log N)$ ổn định ngay cả khi kênh có hàng chục nghìn tin nhắn.
 
 ## ADR-003: Mô hình gửi tin REST kết hợp phát tán WebSocket & Redis Pub/Sub
@@ -38,8 +38,8 @@ Tài liệu này ghi lại toàn bộ các quyết định đã được chốt 
 - **Lý do:** Cột `guilds.owner_id` có ràng buộc `NOT NULL REFERENCES users(id)` và mỗi server chỉ có 1 owner duy nhất; việc chặn owner rời ngang giữ toàn vẹn dữ liệu mà không cần thêm luồng chuyển nhượng quyền sở hữu phức tạp trong 14 ngày.
 
 ## ADR-007: Hủy đăng ký luồng WebSocket khi rời server (`hub.Unsubscribe`)
-- **Trạng thái:** Đề xuất kiến trúc (Chờ xác nhận sau giải thích Ngày 1)
-- **Quyết định:** Bổ sung phương thức `hub.Unsubscribe(userID, guildID)` vào `gateway.Hub` (đối xứng với `hub.Subscribe(userID, guildID)`). Khi người dùng rời server (`DELETE /guilds/:guildId/members/@me`), Service gọi `hub.Unsubscribe` để gỡ toàn bộ kết nối WebSocket đang hoạt động của user đó khỏi danh sách nhận broadcast của `guildID`.
+- **Trạng thái:** Đã chốt (sau khi xác nhận)
+- **Quyết định:** Bổ sung phương thức `hub.Unsubscribe(userID, guildID)` vào `gateway.Hub` (đối xứng với `hub.Subscribe(userID, guildID)`). Khi người dùng rời server (`DELETE /guilds/:guildId/members/@me`), Service gọi `hub.Unsubscribe` để gỡ toàn bộ kết nối WebSocket đang hoạt động của user đó khỏi danh sách nhận broadcast của `guildID`. Kế hoạch gốc (§3.1) chỉ có `Hub.Subscribe`; `Unsubscribe` là bổ sung của dự án. Kiểm thử: `TC-GLD-05`.
 - **Lý do:** Ngăn chặn rò rỉ dữ liệu realtime (user đã rời server nhưng tab đang mở vẫn nhận được tin nhắn mới của server đó trước khi F5).
 
 ## ADR-008: Chiến lược lưu trữ Token trên Web và Tauri
@@ -55,3 +55,30 @@ Tài liệu này ghi lại toàn bộ các quyết định đã được chốt 
   3. Hiển thị trạng thái online/offline (`PRESENCE_UPDATE`)
   4. Danh sách thành viên (`GET /guilds/:guildId/members` + `GUILD_MEMBER_ADD` / `GUILD_MEMBER_REMOVE`)
   Các tính năng còn lại (`Custom Theme JSON`, `Animated Pixel Cursor`, và toàn bộ nhóm `Could`) được tạm hoãn để bảo đảm chất lượng cốt lõi.
+- **Thứ tự cắt khi trễ (theo kế hoạch gốc):** cắt presence và sửa/xóa tin nhắn trước; giữ typing indicator.
+- **Khác kế hoạch gốc:** kế hoạch gốc khuyên tối đa 2 mục `Should` nếu làm một mình (typing + pixel cursor) và coi theme + pixel cursor là điểm nhấn. Sprint này chọn 4 mục khác và hoãn theme/cursor. Nếu còn thời gian cuối Ngày 12, làm lát nhỏ của theme: chuyển `data-theme` giữa `discord-night` và `steam-blue` (chỉ CSS, `theme/tokens.css` đã nằm trong kế hoạch).
+
+## ADR-010: Quy ước lỗi, mã lỗi mã mời và rate limit
+- **Trạng thái:** Đề xuất
+- **Quyết định:** Mọi lỗi trả `{"error": {"code", "message"}}` với mã HTTP trong `400/401/403/404/409/429`. Mã mời hết hạn hoặc hết lượt trả `400` (`INVITE_EXPIRED`, `INVITE_EXHAUSTED`). Rate limit trả `429 RATE_LIMITED`: 30 tin / 10 giây / user, 10 lần đăng nhập / phút / IP.
+- **Lý do:** Giữ trong tập mã của kế hoạch gốc (không có `410`). Ngưỡng 30 để TC-WS-02 (20 tin liên tiếp) không bị chặn.
+
+## ADR-011: RESYNC thay cache thay vì ghép
+- **Trạng thái:** Đề xuất
+- **Quyết định:** Từ lần `READY` thứ hai, client invalidate cache `['messages']` (và danh sách thành viên) rồi tải lại bằng REST; kết quả thay thế cache.
+- **Lý do:** Khớp `useGateway` trong kế hoạch gốc §3.2; không cần tham số `after`; tin sửa/xóa lỡ lúc mất mạng cũng được cập nhật.
+
+## ADR-012: Presence offline do Hub phát
+- **Trạng thái:** Đề xuất
+- **Quyết định:** Khi kết nối cuối cùng của user đóng, Hub phát `PRESENCE_UPDATE` offline. Key `presence:{userID}` (TTL 60 giây) chỉ để `GET members` trả đúng khi server chết đột ngột.
+- **Lý do:** Key Redis hết hạn không tự phát sự kiện; Hub đã có map `users`. Giới hạn đã biết: với 2 instance, user nối cả hai có thể bị báo offline sớm tối đa một nhịp heartbeat (25 giây).
+
+## ADR-013: Vé WebSocket sai trả HTTP 401
+- **Trạng thái:** Đề xuất
+- **Quyết định:** Vé sai hoặc hết hạn bị từ chối bằng HTTP `401` ở bước nâng cấp; bỏ mã `4001`. Mã `4003` do client phát khi mất heartbeat.
+- **Lý do:** Khớp `openapi.yaml`, TC-WS-01 và code mẫu §3.1; client luôn lấy vé mới khi kết nối lại nên không cần mã riêng.
+
+## ADR-014: Vai trò `admin` gán bằng SQL trong sprint
+- **Trạng thái:** Đề xuất
+- **Quyết định:** Không thêm API đổi vai trò; `admin` được gán bằng `UPDATE guild_members` khi kiểm thử. Nếu còn giờ sau Ngày 8, thêm `PATCH /guilds/{guildId}/members/{userId}` (chỉ Owner).
+- **Lý do:** Kế hoạch gốc có các thao tác "Owner/admin" nhưng không có endpoint gán vai trò; API nhỏ nhưng không thuộc `Must`/`Should` đã chốt.
