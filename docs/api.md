@@ -522,13 +522,15 @@ Nâng cấp kết nối lên WebSocket sau khi:
 2. Tiêu thụ vé nguyên tử bằng lệnh Redis `GETDEL wsticket:{ticket}` -> trả `401 UNAUTHORIZED` (`INVALID_TICKET`) nếu thiếu, sai hoặc đã dùng trước đó.
 3. Tải danh sách server user tham gia, đăng ký vào `Hub` actor và gửi frame `READY`.
 
-**Sự kiện đã triển khai (Ngày 12–13):**
+**Sự kiện đã triển khai (Ngày 12–14):**
 - Server $\rightarrow$ Client (qua Redis Pub/Sub `guild:{guildID}` & `gateway.Subscriber` $\rightarrow$ `Hub`):
   - `READY` (`{ userId, guildIds, heartbeatIntervalMs }`), `HEARTBEAT_ACK` (`{}`), `ERROR` (`{ code, message }`).
   - `MESSAGE_CREATE`, `MESSAGE_UPDATE`, `MESSAGE_DELETE`.
   - `CHANNEL_CREATE`, `CHANNEL_UPDATE`, `CHANNEL_DELETE` (`{ guildId, channel }`).
   - `GUILD_MEMBER_ADD` (`{ guildId, user, role, nickname, joinedAt }`), `GUILD_MEMBER_REMOVE` (`{ guildId, user }`), `GUILD_DELETE` (`{ guildId }`).
-- Client $\rightarrow$ Server: `HEARTBEAT` (mỗi `heartbeatIntervalMs`, timeout ACK `10s` -> `4003`), `TYPING_START` *(hook sẵn sàng cho Ngày 14)*.
+  - `USER_TYPING` (`{ channelId, guildId, userId, username, timestamp }`) — phát tối đa 1 lần / 3 giây theo khóa `typing:{channelID}:{userID}` (`SET NX EX 3`).
+  - `PRESENCE_UPDATE` (`{ userId, status }`) — `online` khi mở kết nối đầu tiên (làm mới `presence:{userID}` TTL `60s` mỗi `HEARTBEAT`), `offline` khi đóng kết nối cuối cùng.
+- Client $\rightarrow$ Server: `HEARTBEAT` (mỗi `heartbeatIntervalMs`, gia hạn `presence:{userID}`, timeout ACK `10s` -> `4003`), `TYPING_START` (`{ channelId }`).
 - Mã đóng WebSocket: `1000` (đóng bình thường), `1001` (server shutdown), `4002` (slow consumer — tràn hàng đợi gửi 256 frame), `4003` (client tự đóng khi quá `10s` không nhận `HEARTBEAT_ACK`).
 
 ---

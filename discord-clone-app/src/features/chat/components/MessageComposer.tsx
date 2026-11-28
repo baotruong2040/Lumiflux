@@ -4,14 +4,17 @@ import type { ChangeEvent, CompositionEvent, KeyboardEvent } from 'react'
 export interface MessageComposerProps {
   channelName: string
   onSendMessage: (content: string) => Promise<void>
+  onTyping?: () => void
 }
 
 const MAX_MESSAGE_LENGTH = 2000
+const TYPING_THROTTLE_MS = 2500
 
-export function MessageComposer({ channelName, onSendMessage }: MessageComposerProps) {
+export function MessageComposer({ channelName, onSendMessage, onTyping }: MessageComposerProps) {
   const [text, setText] = useState('')
   const [validationError, setValidationError] = useState<string | null>(null)
   const isComposingRef = useRef(false)
+  const lastTypingSentRef = useRef(0)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   const trimmedLength = text.trim().length
@@ -23,11 +26,20 @@ export function MessageComposer({ channelName, onSendMessage }: MessageComposerP
   }
 
   function handleChange(e: ChangeEvent<HTMLTextAreaElement>) {
-    setText(e.target.value)
+    const nextValue = e.target.value
+    setText(nextValue)
     if (validationError) {
       setValidationError(null)
     }
     resizeTextarea(e.currentTarget)
+
+    if (onTyping && nextValue.trim().length > 0) {
+      const now = Date.now()
+      if (now - lastTypingSentRef.current >= TYPING_THROTTLE_MS) {
+        lastTypingSentRef.current = now
+        onTyping()
+      }
+    }
   }
 
   function handleCompositionStart(_e: CompositionEvent<HTMLTextAreaElement>) {
@@ -50,6 +62,7 @@ export function MessageComposer({ channelName, onSendMessage }: MessageComposerP
     }
 
     setValidationError(null)
+    lastTypingSentRef.current = 0
     setText('')
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'

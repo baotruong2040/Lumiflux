@@ -28,9 +28,11 @@ type EventPublisher struct {
 }
 
 var (
-	_ domain.MessageEventPublisher = (*EventPublisher)(nil)
-	_ domain.ChannelEventPublisher = (*EventPublisher)(nil)
-	_ domain.GuildEventPublisher   = (*EventPublisher)(nil)
+	_ domain.MessageEventPublisher  = (*EventPublisher)(nil)
+	_ domain.ChannelEventPublisher  = (*EventPublisher)(nil)
+	_ domain.GuildEventPublisher    = (*EventPublisher)(nil)
+	_ domain.PresenceEventPublisher = (*EventPublisher)(nil)
+	_ domain.TypingEventPublisher   = (*EventPublisher)(nil)
 )
 
 // NewEventPublisher constructs a Redis Pub/Sub EventPublisher.
@@ -111,6 +113,19 @@ type guildMemberRemoveEventData struct {
 
 type guildDeleteEventData struct {
 	GuildID uuid.UUID `json:"guildId"`
+}
+
+type presenceUpdateEventData struct {
+	UserID uuid.UUID `json:"userId"`
+	Status string    `json:"status"`
+}
+
+type userTypingEventData struct {
+	ChannelID uuid.UUID `json:"channelId"`
+	GuildID   uuid.UUID `json:"guildId"`
+	UserID    uuid.UUID `json:"userId"`
+	Username  string    `json:"username"`
+	Timestamp int64     `json:"timestamp"`
 }
 
 // PublishMessageCreate broadcasts MESSAGE_CREATE on guild:{guildID}.
@@ -204,6 +219,48 @@ func (p *EventPublisher) PublishGuildMemberRemove(ctx context.Context, guildID u
 func (p *EventPublisher) PublishGuildDelete(ctx context.Context, guildID uuid.UUID) {
 	p.publish(ctx, guildID, "GUILD_DELETE", guildDeleteEventData{
 		GuildID: guildID,
+	})
+}
+
+// PublishPresenceUpdate broadcasts PRESENCE_UPDATE across each unique guildID in guildIDs.
+func (p *EventPublisher) PublishPresenceUpdate(ctx context.Context, guildIDs []uuid.UUID, userID uuid.UUID, online bool) {
+	if len(guildIDs) == 0 || userID == uuid.Nil {
+		return
+	}
+	status := "offline"
+	if online {
+		status = "online"
+	}
+	payload := presenceUpdateEventData{
+		UserID: userID,
+		Status: status,
+	}
+	seen := make(map[uuid.UUID]struct{}, len(guildIDs))
+	for _, gid := range guildIDs {
+		if gid == uuid.Nil {
+			continue
+		}
+		if _, dup := seen[gid]; dup {
+			continue
+		}
+		seen[gid] = struct{}{}
+		p.publish(ctx, gid, "PRESENCE_UPDATE", payload)
+	}
+}
+
+// PublishUserTyping broadcasts USER_TYPING on guild:{guildID}.
+func (p *EventPublisher) PublishUserTyping(
+	ctx context.Context,
+	guildID, channelID, userID uuid.UUID,
+	username string,
+	timestamp int64,
+) {
+	p.publish(ctx, guildID, "USER_TYPING", userTypingEventData{
+		ChannelID: channelID,
+		GuildID:   guildID,
+		UserID:    userID,
+		Username:  username,
+		Timestamp: timestamp,
 	})
 }
 

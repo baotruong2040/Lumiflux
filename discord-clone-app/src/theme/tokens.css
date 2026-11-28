@@ -29,8 +29,10 @@
   --brand-text: #ffffff;
 
   --status-success: #23a559;
+  --status-success-btn: #187941;
+  --status-success-btn-hover: #146636;
   --status-success-bg: rgba(35, 165, 89, 0.16);
-  --status-warning: #f0b232;
+  --status-warning: #f5c451;
   --status-danger: #da373c;
   --status-danger-hover: #a12828;
   --status-danger-text: #ff8c90;

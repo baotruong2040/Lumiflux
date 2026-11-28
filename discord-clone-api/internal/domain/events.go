@@ -44,3 +44,27 @@ func (NoopGuildEventPublisher) PublishGuildMemberRemove(_ context.Context, _ uui
 
 // PublishGuildDelete is a no-op placeholder.
 func (NoopGuildEventPublisher) PublishGuildDelete(_ context.Context, _ uuid.UUID) {}
+
+// PresenceEventPublisher emits realtime PRESENCE_UPDATE events across a user's guilds.
+type PresenceEventPublisher interface {
+	PublishPresenceUpdate(ctx context.Context, guildIDs []uuid.UUID, userID uuid.UUID, online bool)
+}
+
+// NoopPresenceEventPublisher is used when realtime presence broadcasting is disabled.
+type NoopPresenceEventPublisher struct{}
+
+// PublishPresenceUpdate is a no-op placeholder.
+func (NoopPresenceEventPublisher) PublishPresenceUpdate(_ context.Context, _ []uuid.UUID, _ uuid.UUID, _ bool) {
+}
+
+// TypingEventPublisher emits realtime USER_TYPING events in a guild channel.
+type TypingEventPublisher interface {
+	PublishUserTyping(ctx context.Context, guildID, channelID, userID uuid.UUID, username string, timestamp int64)
+}
+
+// NoopTypingEventPublisher is used when realtime typing broadcasting is disabled.
+type NoopTypingEventPublisher struct{}
+
+// PublishUserTyping is a no-op placeholder.
+func (NoopTypingEventPublisher) PublishUserTyping(_ context.Context, _, _, _ uuid.UUID, _ string, _ int64) {
+}

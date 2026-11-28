@@ -84,6 +84,18 @@ type PresenceReader interface {
 	GetOnlineMap(ctx context.Context, userIDs []uuid.UUID) (map[uuid.UUID]bool, error)
 }
 
+// PresenceStore reads and updates online presence state with TTL (presence:{userID}).
+type PresenceStore interface {
+	PresenceReader
+	SetOnline(ctx context.Context, userID uuid.UUID, ttl time.Duration) error
+	SetOffline(ctx context.Context, userID uuid.UUID) error
+}
+
+// TypingLimiter enforces per-channel typing indicator rate limits (typing:{channelID}:{userID}).
+type TypingLimiter interface {
+	AllowTyping(ctx context.Context, channelID, userID uuid.UUID, ttl time.Duration) (bool, error)
+}
+
 // MessageRepository defines persistence operations for channel messages.
 type MessageRepository interface {
 	Create(ctx context.Context, msg *Message) (*Message, error)

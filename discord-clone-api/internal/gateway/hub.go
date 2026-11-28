@@ -57,10 +57,14 @@ type Hub struct {
 	broadcastCh       chan broadcastMsg
 	directCh          chan clientFrame
 	cmdCh             chan func()
+	hookCh            chan func()
 	done              chan struct{}
 	pumpWG            sync.WaitGroup
+	hookWG            sync.WaitGroup
 	heartbeatInterval time.Duration
 	log               *slog.Logger
+	onUserOnline      func(userID uuid.UUID, guildIDs []uuid.UUID)
+	onUserOffline     func(userID uuid.UUID, guildIDs []uuid.UUID)
 	onHeartbeat       func(userID uuid.UUID)
 	onTypingStart     func(client *Client, data json.RawMessage)
 }
@@ -84,10 +88,25 @@ func NewHub(heartbeatInterval time.Duration, log *slog.Logger) *Hub {
 		broadcastCh:       make(chan broadcastMsg, 256),
 		directCh:          make(chan clientFrame, 128),
 		cmdCh:             make(chan func(), 64),
+		hookCh:            make(chan func(), 512),
 		done:              make(chan struct{}),
 		heartbeatInterval: heartbeatInterval,
 		log:               log,
 	}
+}
+
+// SetOnlineHook registers a callback invoked asynchronously when a user opens their first active session.
+func (h *Hub) SetOnlineHook(fn func(userID uuid.UUID, guildIDs []uuid.UUID)) {
+	h.submitCmd(context.Background(), func() {
+		h.onUserOnline = fn
+	})
+}
+
+// SetOfflineHook registers a callback invoked asynchronously when a user's last active session closes.
+func (h *Hub) SetOfflineHook(fn func(userID uuid.UUID, guildIDs []uuid.UUID)) {
+	h.submitCmd(context.Background(), func() {
+		h.onUserOffline = fn
+	})
 }
 
 // SetHeartbeatHook registers an optional callback invoked when a client sends HEARTBEAT.
@@ -106,14 +125,26 @@ func (h *Hub) SetTypingHook(fn func(client *Client, data json.RawMessage)) {
 
 // Run owns and processes all state mutations on the hub actor goroutine until ctx is cancelled.
 func (h *Hub) Run(ctx context.Context) {
+	h.hookWG.Add(1)
+	go func() {
+		defer h.hookWG.Done()
+		for fn := range h.hookCh {
+			if fn != nil {
+				fn()
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
 			close(h.done)
 			for c := range h.clients {
-				h.removeClient(c, CloseGoingAway, "server shutting down")
+				h.removeClient(c, CloseGoingAway, "server shutting down", false)
 			}
 			h.pumpWG.Wait()
+			close(h.hookCh)
+			h.hookWG.Wait()
 			return
 
 		case req := <-h.registerCh:
@@ -121,7 +152,7 @@ func (h *Hub) Run(ctx context.Context) {
 			req.reply <- ok
 
 		case c := <-h.unregisterCh:
-			h.removeClient(c, CloseNormalClosure, "")
+			h.removeClient(c, CloseNormalClosure, "", true)
 
 		case msg := <-h.broadcastCh:
 			switch msg.action {
@@ -347,25 +378,42 @@ func (h *Hub) HandleHeartbeat(c *Client) {
 			return
 		}
 		if h.onHeartbeat != nil {
-			h.onHeartbeat(c.userID)
+			fn := h.onHeartbeat
+			uid := c.userID
+			h.dispatchHook(func() { fn(uid) })
 		}
 		h.enqueue(c, frame)
 	})
 }
 
-// HandleTypingStart forwards a client's TYPING_START payload to the optional typing hook on the actor goroutine.
+// HandleTypingStart forwards a client's TYPING_START payload to the optional typing hook via the async hook worker.
 func (h *Hub) HandleTypingStart(c *Client, data json.RawMessage) {
 	if c == nil {
 		return
 	}
+	payloadCopy := append(json.RawMessage(nil), data...)
 	h.submitCmd(context.Background(), func() {
 		if _, ok := h.clients[c]; !ok {
 			return
 		}
 		if h.onTypingStart != nil {
-			h.onTypingStart(c, data)
+			fn := h.onTypingStart
+			h.dispatchHook(func() { fn(c, payloadCopy) })
 		}
 	})
+}
+
+func (h *Hub) dispatchHook(fn func()) {
+	select {
+	case <-h.done:
+		return
+	default:
+	}
+	select {
+	case h.hookCh <- fn:
+	default:
+		h.log.Warn("dropping hub hook callback: queue full")
+	}
 }
 
 // Stats queries current hub map sizes safely through the actor goroutine.
@@ -430,6 +478,7 @@ func (h *Hub) addClient(c *Client) bool {
 	h.clients[c] = struct{}{}
 
 	userSet, ok := h.users[c.userID]
+	wasOffline := !ok || len(userSet) == 0
 	if !ok {
 		userSet = make(map[*Client]struct{})
 		h.users[c.userID] = userSet
@@ -473,24 +522,26 @@ func (h *Hub) addClient(c *Client) bool {
 		h.enqueue(c, readyFrame)
 	}
 
+	if wasOffline && h.onUserOnline != nil {
+		fn := h.onUserOnline
+		uid := c.userID
+		guildsCopy := append([]uuid.UUID(nil), guildList...)
+		h.dispatchHook(func() { fn(uid, guildsCopy) })
+	}
+
 	return true
 }
 
-func (h *Hub) removeClient(c *Client, code int, reason string) {
+func (h *Hub) removeClient(c *Client, code int, reason string, emitOffline bool) {
 	if _, ok := h.clients[c]; !ok {
 		return
 	}
 
 	delete(h.clients, c)
 
-	if userSet, ok := h.users[c.userID]; ok {
-		delete(userSet, c)
-		if len(userSet) == 0 {
-			delete(h.users, c.userID)
-		}
-	}
-
+	guildList := make([]uuid.UUID, 0, len(c.guilds))
 	for gid := range c.guilds {
+		guildList = append(guildList, gid)
 		if guildSet, ok := h.guilds[gid]; ok {
 			delete(guildSet, c)
 			if len(guildSet) == 0 {
@@ -500,8 +551,23 @@ func (h *Hub) removeClient(c *Client, code int, reason string) {
 		delete(c.guilds, gid)
 	}
 
+	lastSessionClosed := false
+	if userSet, ok := h.users[c.userID]; ok {
+		delete(userSet, c)
+		if len(userSet) == 0 {
+			delete(h.users, c.userID)
+			lastSessionClosed = true
+		}
+	}
+
 	c.signalStop(code, reason)
 	close(c.send)
+
+	if emitOffline && lastSessionClosed && h.onUserOffline != nil {
+		fn := h.onUserOffline
+		uid := c.userID
+		h.dispatchHook(func() { fn(uid, guildList) })
+	}
 }
 
 func (h *Hub) fanoutGuild(guildID uuid.UUID, frame []byte) {
@@ -516,6 +582,6 @@ func (h *Hub) enqueue(c *Client, frame []byte) {
 	case c.send <- frame:
 	default:
 		h.log.Warn("disconnecting slow websocket consumer", "user_id", c.userID)
-		h.removeClient(c, CloseSlowConsumer, "slow consumer")
+		h.removeClient(c, CloseSlowConsumer, "slow consumer", true)
 	}
 }

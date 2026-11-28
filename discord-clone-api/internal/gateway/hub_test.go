@@ -225,7 +225,7 @@ func TestHub_ReadyHeartbeatAndDynamicSubscriptions(t *testing.T) {
 	require.NoError(t, conn.WriteJSON(OutboundFrame{T: EventHeartbeat}))
 	ackFrame := readFrame(t, conn)
 	assert.Equal(t, EventHeartbeatAck, ackFrame.T)
-	assert.Equal(t, int32(1), heartbeatCount.Load())
+	require.Eventually(t, func() bool { return heartbeatCount.Load() == 1 }, time.Second, 5*time.Millisecond)
 
 	// Malformed JSON -> ERROR frame
 	require.NoError(t, conn.WriteMessage(websocket.TextMessage, []byte("{bad-json")))
@@ -502,6 +502,69 @@ func TestHub_TC_HUB_05_GoroutineBaselinePprof(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return gp.Count() <= baseline+2
 	}, 2*time.Second, 15*time.Millisecond, "goroutines should return near baseline (%d)", baseline)
+}
+
+func TestHub_MultiTabPresenceHooks(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	log := logger.NewWithWriter(io.Discard, "error")
+	hub := NewHub(25*time.Second, log)
+	hubDone := make(chan struct{})
+	go func() {
+		defer close(hubDone)
+		hub.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-hubDone
+	}()
+
+	var onlineEvents atomic.Int32
+	var offlineEvents atomic.Int32
+	var mu sync.Mutex
+	var lastOfflineGuilds []uuid.UUID
+
+	hub.SetOnlineHook(func(_ uuid.UUID, _ []uuid.UUID) {
+		onlineEvents.Add(1)
+	})
+	hub.SetOfflineHook(func(_ uuid.UUID, guildIDs []uuid.UUID) {
+		mu.Lock()
+		lastOfflineGuilds = append([]uuid.UUID(nil), guildIDs...)
+		mu.Unlock()
+		offlineEvents.Add(1)
+	})
+
+	userID := idgen.MustUUIDv7()
+	guild1 := idgen.MustUUIDv7()
+	guild2 := idgen.MustUUIDv7()
+
+	tab1 := NewFakeClient(hub, userID, []uuid.UUID{guild1})
+	tab2 := NewFakeClient(hub, userID, []uuid.UUID{guild1})
+
+	// 0 -> 1 triggers online once
+	require.True(t, hub.Register(tab1))
+	require.Eventually(t, func() bool { return onlineEvents.Load() == 1 }, time.Second, 5*time.Millisecond)
+
+	// 1 -> 2 does NOT trigger another online event
+	require.True(t, hub.Register(tab2))
+	time.Sleep(30 * time.Millisecond)
+	assert.Equal(t, int32(1), onlineEvents.Load())
+
+	// Subscribe adds guild2 to both tabs
+	hub.Subscribe(ctx, userID, guild2)
+
+	// 2 -> 1 does NOT emit offline
+	hub.Unregister(tab1)
+	time.Sleep(30 * time.Millisecond)
+	assert.Equal(t, int32(0), offlineEvents.Load())
+
+	// 1 -> 0 emits offline once with all subscribed guilds
+	hub.Unregister(tab2)
+	require.Eventually(t, func() bool { return offlineEvents.Load() == 1 }, time.Second, 5*time.Millisecond)
+	mu.Lock()
+	assert.ElementsMatch(t, []uuid.UUID{guild1, guild2}, lastOfflineGuilds)
+	mu.Unlock()
 }
 
 func BenchmarkFanout(b *testing.B) {

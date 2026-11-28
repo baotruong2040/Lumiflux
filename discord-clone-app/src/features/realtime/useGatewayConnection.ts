@@ -4,6 +4,7 @@ import type { User } from '../../core/api'
 import { gatewayClient } from '../../core/gateway'
 import type { GatewayConnectionStatus } from '../../core/gateway'
 import { applyGatewayEventToCache, handleGatewayResync } from './realtimeHandlers'
+import { useTypingStore } from './typingStore'
 
 function subscribeGatewayStatus(onStoreChange: () => void): () => void {
   return gatewayClient.onStatusChange(() => {
@@ -23,6 +24,7 @@ export function useGatewayConnection(user: User | null): GatewayConnectionStatus
   useEffect(() => {
     if (!userId) {
       gatewayClient.disconnect()
+      useTypingStore.getState().clearAll()
       return
     }
 
@@ -45,6 +47,7 @@ export function useGatewayConnection(user: User | null): GatewayConnectionStatus
       offEvent()
       offResync()
       gatewayClient.disconnect()
+      useTypingStore.getState().clearAll()
     }
   }, [queryClient, userId])
 

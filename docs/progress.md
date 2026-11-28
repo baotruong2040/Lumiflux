@@ -2,7 +2,7 @@
 
 - **Khung thời gian triển khai:** 16/11/2026 – 29/11/2026 (14 ngày)
 - **Cập nhật lần cuối:** 28/11/2026
-- **Trạng thái tổng thể:** Đã hoàn thành Ngày 1, Ngày 2, Ngày 4–13 (Redis Pub/Sub `guild:{guildID}`, `GatewayClient.ts` & TanStack Query Realtime Sync); còn bước xác nhận tương tác trực tiếp trên cửa sổ Desktop GUI Ngày 3 và chuyển sang Ngày 14 (`Typing indicator`, `Presence`, `cmd/loadtest`, `npx tauri build`).
+- **Trạng thái tổng thể:** Đã hoàn thành toàn bộ Sprint 14 ngày (**Ngày 1–2, 4–14**, gồm cả 3 tính năng `Should`, `cmd/loadtest`, CI, `Makefile`, `README.md` và đóng gói Desktop Tauri 2); còn bước xác nhận tương tác thủ công trên cửa sổ Desktop GUI Ngày 3 nếu cần bổ sung kiểm tra trực tiếp.
 
 ---
 
@@ -23,7 +23,7 @@
 | **Ngày 11** | Chat UI & Optimistic Update (`nonce`) | **Hoàn thành** | Hoàn thiện `messageApi`, `useChannelMessages`, `MessageList`, `MessageComposer`; `npm run lint` (`0 warnings`), `npm run build`, `cargo check` xanh; Web E2E trên 1.000 tin nhắn seed pass (`TC-MSG-02`, `TC-UI-01..02`, sửa/xóa & F5). |
 | **Ngày 12** | WebSocket Gateway Backend (`Hub`, `Client`, `Ticket` dùng 1 lần) | **Hoàn thành** | Hoàn thiện `POST /api/v1/ws/ticket` (`GETDEL` TTL `30s`), `GET /ws?ticket=...`, `Hub` actor (`Subscribe`/`Unsubscribe`, shutdown `1001`), `Client` (`readPump`/`writePump`, `4002`); `TC-HUB-01..05`, `goleak`, `TC-WS-01`, `BenchmarkFanout` & `go test -race ./...` xanh. |
 | **Ngày 13** | Kết nối Redis Pub/Sub & Frontend Realtime (`GatewayClient`, `RESYNC`) | **Hoàn thành** | Nối `redisstore.EventPublisher` + `gateway.Subscriber` (`MESSAGE_*`, `CHANNEL_*`, `GUILD_MEMBER_*`, `GUILD_DELETE`); dựng `events.ts` (Zod), `GatewayClient.ts` (`4003`, backoff+jitter, `RESYNC`), TanStack Query sync; `22/22` integration test (`TC-WS-01..02`, `TC-WS-06`, `TC-GLD-03/05/07`, `TC-MSG-03`), `gateway_client_test` `4/4`, và live 2 instance `:8080`/`:8081` (`p50=2.83ms`, `p95=4.39ms`) xanh. |
-| **Ngày 14** | Hoàn thiện nhóm `Should`, kiểm thử toàn luồng, đóng gói & tài liệu hóa | **Kế hoạch** | Chưa bắt đầu. |
+| **Ngày 14** | Hoàn thiện nhóm `Should`, kiểm thử toàn luồng, đóng gói & tài liệu hóa | **Hoàn thành** | Hoàn thiện Typing (`SET NX EX 3`), Presence multi-tab (`TTL 60s`), Member List realtime; `cmd/loadtest` (`2`–`500` client 100% delivery, `500` client `p99=30.69ms`), `.github/workflows/ci.yml`, `Makefile`, `README.md`, WCAG AA `>= 4.57:1`, `25/25` integration test, Chrome E2E và `npx tauri build` (`.msi` + `-setup.exe`) xanh. |
 
 ---
 
@@ -105,7 +105,17 @@
   - `npm run lint` (`oxlint`: `0 warnings, 0 errors` trên 39 file), `npm run build` (`tsc -b && vite build`), `cargo check`, và unit test `gateway_client_test.ts` (**4/4 pass**) xanh.
   - Web Chrome E2E 2 tab (`http://127.0.0.1:5173/`): đăng ký `rt_e2e_chrome`, tạo server `Realtime E2E Guild`, mở tab 2 tự hydrate và nối `/ws`; Tab 1 gửi `Cross-tab realtime check` (dedup `nonce` hiện đúng 1 tin, tab 2 nhận ngay), sửa `Edited across tabs` (`(đã chỉnh sửa)` cập nhật live), xóa mềm, tạo kênh `#pubsub-live` và xóa server `Realtime E2E Guild` (`GUILD_DELETE` đưa cả 2 tab về màn hình chào mừng) đều cập nhật tức thì không cần F5, **0 lỗi console/CORS**.
 
+### Mốc Ngày 14 — Tính năng Should, Loadtest, Đóng gói Tauri 2 & QA Cuối (28/11/2026)
+- **Backend (`discord-clone-api/`):**
+  - Bổ sung `domain.PresenceStore`, `domain.TypingLimiter`, `PresenceEventPublisher`, `TypingEventPublisher`, `redisstore.PresenceStore` (`SetOnline` TTL `60s` / `SetOffline`), `redisstore.TypingStore` (`SET NX EX 3`), `redisstore.EventPublisher` (`PRESENCE_UPDATE`, `USER_TYPING`), `service.RealtimeService` (`realtime_service_test.go`), và `gateway.BindRealtimeHooks` + worker `hookCh` không block `Hub.Run`.
+  - `go vet ./...`, `go list` (`domain`/`service` sạch dependency), `internal/gateway/...` (**9/9 pass** + `goleak`, gồm `TestHub_MultiTabPresenceHooks`), và `internal/integration/...` (`RUN_INTEGRATION_TESTS=1`: **25/25 pass**, gồm `TC-WS-04` Typing `SET NX EX 3`, `TC-WS-05`/`07` Presence multi-tab + tab cuối offline, `TC-UI-03` CORS & WS `CheckOrigin` đủ Web + Tauri origin).
+  - Thêm `cmd/loadtest/main.go` và đo thực tế với `127.0.0.1:8080` (`20` tin/lượt): `2` client (`40/40`, `p50=4.36ms`, `p95=5.02ms`, `p99=6.60ms`), `10` client (`200/200`, `p50=4.69ms`, `p95=5.82ms`, `p99=9.75ms`), `100` client (`2.000/2.000`, `p50=5.07ms`, `p95=6.24ms`, `p99=10.92ms`), `500` client (`10.000/10.000`, `p50=15.66ms`, `p95=24.24ms`, `p99=30.69ms`).
+- **Frontend & Desktop (`discord-clone-app/`):**
+  - Bổ sung `typingStore.ts` (auto-expiry ~`3,5s`, tự xóa khi nhận `MESSAGE_CREATE`), throttle gửi `TYPING_START` (`2,5s`) trong `MessageComposer.tsx`, hiển thị thanh `... đang nhập` & Member List nhóm `Trực tuyến` / `Ngoại tuyến` trong `ChatArea.tsx` (sử dụng selector `EMPTY_TYPING_ENTRIES` ổn định), và chuẩn hóa màu WCAG AA trong `tokens.css` (`TC-UI-04`: `16/16` cặp token $\ge$ `4,5:1`, thấp nhất `4,57:1`).
+  - `npm run lint` (`oxlint`: `0 warnings, 0 errors`), `npm run build` (`tsc -b && vite build`), unit test `gateway_client_test.ts` (**5/5 pass**), Chrome E2E 2 tab (`Trực tuyến — 1`, gửi/nhận realtime, đóng tab phụ vẫn giữ trạng thái online), và `npx tauri build` tạo `Lumiflux_0.1.0_x64_en-US.msi` & `Lumiflux_0.1.0_x64-setup.exe`.
+- **DevOps & Tài liệu:** Bổ sung `.github/workflows/ci.yml`, `Makefile`, hoàn thiện `README.md`, `docs/api.md`, `docs/testing.md`.
+
 ---
 
 ## 3. Việc cần làm tiếp theo
-Bắt đầu **Ngày 14**: Hoàn thiện nhóm tính năng `Should` (`TYPING_START`/`USER_TYPING`, `PRESENCE_UPDATE` online/offline), `cmd/loadtest` (10/100/500 client), kiểm thử đa nền tảng Web + `npx tauri build`, và hoàn thiện `README.md`.
+Hoàn tất triển khai toàn bộ tính năng và kiểm thử Sprint 14 ngày; sẵn sàng tổng hợp báo cáo đồ án và thuyết trình.

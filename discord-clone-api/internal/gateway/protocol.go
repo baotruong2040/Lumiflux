@@ -65,6 +65,11 @@ type ErrorPayload struct {
 	Message string `json:"message"`
 }
 
+// TypingStartPayload is sent by clients on TYPING_START events.
+type TypingStartPayload struct {
+	ChannelID uuid.UUID `json:"channelId"`
+}
+
 // MarshalFrame encodes a WebSocket envelope frame as JSON bytes.
 func MarshalFrame(eventType string, payload any) ([]byte, error) {
 	return json.Marshal(OutboundFrame{

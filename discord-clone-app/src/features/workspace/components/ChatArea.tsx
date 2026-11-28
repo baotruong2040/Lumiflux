@@ -1,10 +1,15 @@
 import type { Channel, Guild, GuildMember, GuildRole, User } from '../../../core/api'
+import { gatewayClient } from '../../../core/gateway'
 import { MessageComposer } from '../../chat/components/MessageComposer'
 import { MessageList } from '../../chat/components/MessageList'
 import '../../chat/components/ChatStyles.css'
 import { useChannelMessages } from '../../chat/hooks/useChannelMessages'
+import { formatTypingText, useTypingStore } from '../../realtime/typingStore'
+import type { TypingEntry } from '../../realtime/typingStore'
 import { getInitials } from '../utils/workspaceHelpers'
 import { HashIcon, PlusIcon, UserPlusIcon, UsersIcon } from './Icons'
+
+const EMPTY_TYPING_ENTRIES: TypingEntry[] = []
 
 export interface ChatAreaProps {
   currentUser: User | null
@@ -46,7 +51,48 @@ export function ChatArea({
   onOpenEditChannel,
 }: ChatAreaProps) {
   const canManageChannels = role === 'owner' || role === 'admin'
-  const chat = useChannelMessages(activeChannel?.id ?? null, currentUser)
+  const activeChannelId = activeChannel?.id ?? null
+  const chat = useChannelMessages(activeChannelId, currentUser)
+  const typingEntries = useTypingStore((s) =>
+    activeChannelId ? (s.byChannel[activeChannelId] ?? EMPTY_TYPING_ENTRIES) : EMPTY_TYPING_ENTRIES,
+  )
+  const typingText = formatTypingText(typingEntries)
+  const onlineMembers = members.filter((m) => m.online)
+  const offlineMembers = members.filter((m) => !m.online)
+
+  function renderMemberItem(member: GuildMember) {
+    return (
+      <li
+        key={member.userId}
+        className={`ws-member-item ${member.online ? '' : 'ws-member-item-offline'}`}
+      >
+        <div className="ws-member-avatar">
+          {member.user.avatarUrl ? (
+            <img
+              src={member.user.avatarUrl}
+              alt={member.user.displayName}
+              className="ws-user-avatar-img"
+            />
+          ) : (
+            <span>{getInitials(member.user.displayName || member.user.username)}</span>
+          )}
+          <span
+            className={`ws-presence-dot ${
+              member.online ? 'ws-presence-online' : 'ws-presence-offline'
+            }`}
+            title={member.online ? 'Đang trực tuyến' : 'Ngoại tuyến'}
+          />
+        </div>
+        <div className="ws-member-info">
+          <span className="ws-member-name">{member.nickname || member.user.displayName}</span>
+          <span className="ws-member-username">@{member.user.username}</span>
+        </div>
+        <span className={`ws-role-badge ws-role-${member.role}`}>
+          {ROLE_LABELS[member.role]}
+        </span>
+      </li>
+    )
+  }
 
   if (!activeGuild) {
     return (
@@ -163,10 +209,29 @@ export function ChatArea({
                 onOpenEditChannel={onOpenEditChannel}
               />
 
+              <div className="chat-typing-slot" aria-live="polite">
+                {typingText && (
+                  <div className="chat-typing-bar">
+                    <span className="chat-typing-dots" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                    <span>{typingText}</span>
+                  </div>
+                )}
+              </div>
+
               <MessageComposer
                 key={`composer-${activeChannel.id}`}
                 channelName={activeChannel.name}
                 onSendMessage={chat.sendMessage}
+                onTyping={() => {
+                  gatewayClient.send({
+                    t: 'TYPING_START',
+                    d: { channelId: activeChannel.id },
+                  })
+                }}
               />
             </>
           )}
@@ -178,38 +243,25 @@ export function ChatArea({
             {isLoadingMembers ? (
               <p className="ws-member-loading">Đang tải thành viên...</p>
             ) : (
-              <ul className="ws-member-list">
-                {members.map((member) => (
-                  <li key={member.userId} className="ws-member-item">
-                    <div className="ws-member-avatar">
-                      {member.user.avatarUrl ? (
-                        <img
-                          src={member.user.avatarUrl}
-                          alt={member.user.displayName}
-                          className="ws-user-avatar-img"
-                        />
-                      ) : (
-                        <span>{getInitials(member.user.displayName || member.user.username)}</span>
-                      )}
-                      <span
-                        className={`ws-presence-dot ${
-                          member.online ? 'ws-presence-online' : 'ws-presence-offline'
-                        }`}
-                        title={member.online ? 'Đang trực tuyến' : 'Ngoại tuyến'}
-                      />
-                    </div>
-                    <div className="ws-member-info">
-                      <span className="ws-member-name">
-                        {member.nickname || member.user.displayName}
-                      </span>
-                      <span className="ws-member-username">@{member.user.username}</span>
-                    </div>
-                    <span className={`ws-role-badge ws-role-${member.role}`}>
-                      {ROLE_LABELS[member.role]}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <div className="ws-member-groups">
+                {onlineMembers.length > 0 && (
+                  <section aria-label="Thành viên đang trực tuyến">
+                    <h3 className="ws-member-group-heading">
+                      Trực tuyến — {onlineMembers.length}
+                    </h3>
+                    <ul className="ws-member-list">{onlineMembers.map(renderMemberItem)}</ul>
+                  </section>
+                )}
+
+                {offlineMembers.length > 0 && (
+                  <section aria-label="Thành viên ngoại tuyến">
+                    <h3 className="ws-member-group-heading">
+                      Ngoại tuyến — {offlineMembers.length}
+                    </h3>
+                    <ul className="ws-member-list">{offlineMembers.map(renderMemberItem)}</ul>
+                  </section>
+                )}
+              </div>
             )}
           </aside>
         )}

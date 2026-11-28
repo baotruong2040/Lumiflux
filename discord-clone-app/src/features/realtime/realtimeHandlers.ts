@@ -7,6 +7,7 @@ import {
   upsertIncomingMessage,
 } from '../chat/utils/messageHelpers'
 import type { MessagesInfiniteData } from '../chat/utils/messageHelpers'
+import { useTypingStore } from './typingStore'
 
 function sortChannels(list: Channel[]): Channel[] {
   return [...list].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))
@@ -31,6 +32,7 @@ export function applyGatewayEventToCache(
       queryClient.setQueryData<MessagesInfiniteData>(['messages', event.d.channelId], (old) =>
         upsertIncomingMessage(old, msg),
       )
+      useTypingStore.getState().clearUserTyping(event.d.channelId, event.d.author.id)
       return
     }
 
@@ -81,6 +83,7 @@ export function applyGatewayEventToCache(
         old ? old.filter((c) => c.id !== channel.id) : old,
       )
       queryClient.removeQueries({ queryKey: ['messages', channel.id] })
+      useTypingStore.getState().clearChannel(channel.id)
       return
     }
 
@@ -151,10 +154,18 @@ export function applyGatewayEventToCache(
       return
     }
 
+    case 'USER_TYPING': {
+      if (!currentUserId || event.d.userId !== currentUserId) {
+        useTypingStore
+          .getState()
+          .recordTyping(event.d.channelId, event.d.userId, event.d.username)
+      }
+      return
+    }
+
     case 'READY':
     case 'HEARTBEAT_ACK':
     case 'ERROR':
-    case 'USER_TYPING':
       return
   }
 }

@@ -61,6 +61,7 @@ func main() {
 	tokenStore := redisstore.NewTokenStore(redisClient)
 	ticketStore := redisstore.NewTicketStore(redisClient)
 	presenceStore := redisstore.NewPresenceStore(redisClient)
+	typingStore := redisstore.NewTypingStore(redisClient)
 	rateLimiter := redisstore.NewRateLimiter(redisClient)
 	pgHealth := postgres.NewHealthChecker(pgPool)
 	redisHealth := redisstore.NewHealthChecker(redisClient)
@@ -98,6 +99,17 @@ func main() {
 		cfg.MessageRateWindow,
 	)
 	ticketSvc := service.NewTicketService(ticketStore, cfg.WSTicketTTL)
+	realtimeSvc := service.NewRealtimeService(
+		guildRepo,
+		channelRepo,
+		presenceStore,
+		typingStore,
+		eventPublisher,
+		eventPublisher,
+		60*time.Second,
+		3*time.Second,
+	)
+	gateway.BindRealtimeHooks(hub, realtimeSvc, log)
 	wsHandler := gateway.NewHandler(hub, ticketSvc, guildRepo, cfg.CORSAllowedOrigins, log)
 
 	engine := router.New(router.Dependencies{

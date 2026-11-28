@@ -152,6 +152,19 @@ func newIntegrationBackendInstance(
 		cfg.MessageRateWindow,
 	)
 	ticketSvc := service.NewTicketService(ticketStore, cfg.WSTicketTTL)
+	presenceStore := redisstore.NewPresenceStore(redisClient)
+	typingStore := redisstore.NewTypingStore(redisClient)
+	realtimeSvc := service.NewRealtimeService(
+		guildRepo,
+		channelRepo,
+		presenceStore,
+		typingStore,
+		eventPublisher,
+		eventPublisher,
+		60*time.Second,
+		3*time.Second,
+	)
+	gateway.BindRealtimeHooks(hub, realtimeSvc, log)
 	wsHandler := gateway.NewHandler(hub, ticketSvc, guildRepo, cfg.CORSAllowedOrigins, log)
 
 	return router.New(router.Dependencies{
