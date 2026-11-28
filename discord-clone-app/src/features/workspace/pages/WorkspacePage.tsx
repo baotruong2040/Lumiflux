@@ -3,7 +3,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { channelApi, guildApi } from '../../../core/api'
 import type { Channel, GuildRole } from '../../../core/api'
+import { gatewayClient } from '../../../core/gateway'
 import { useAuthStore } from '../../auth/store/authStore'
+import { useGatewayConnection } from '../../realtime/useGatewayConnection'
 import { ChannelSidebar } from '../components/ChannelSidebar'
 import { ChatArea } from '../components/ChatArea'
 import { ServerBar } from '../components/ServerBar'
@@ -39,6 +41,7 @@ export function WorkspacePage() {
 
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
+  const gatewayStatus = useGatewayConnection(user)
 
   const showMembers = useWorkspaceStore((s) => s.showMembers)
   const toggleMembers = useWorkspaceStore((s) => s.toggleMembers)
@@ -238,6 +241,7 @@ export function WorkspacePage() {
   })
 
   async function handleLogout() {
+    gatewayClient.disconnect()
     await logout()
     queryClient.clear()
     resetWorkspace()
@@ -245,7 +249,13 @@ export function WorkspacePage() {
   }
 
   return (
-    <div className="ws-shell">
+    <div className="ws-shell-wrap">
+      {gatewayStatus === 'reconnecting' && (
+        <div className="ws-connection-banner" role="status" aria-live="polite">
+          Mất kết nối realtime — đang tự động kết nối lại và đồng bộ tin nhắn...
+        </div>
+      )}
+      <div className="ws-shell">
       <ServerBar
         guilds={guilds}
         activeGuildId={activeGuildId}
@@ -393,6 +403,7 @@ export function WorkspacePage() {
           }
         }}
       />
+      </div>
     </div>
   )
 }

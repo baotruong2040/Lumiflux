@@ -26,15 +26,24 @@ type UpdateChannelInput struct {
 
 // ChannelService implements guild channel CRUD with membership and owner/admin RBAC checks.
 type ChannelService struct {
-	guilds   domain.GuildRepository
-	channels domain.ChannelRepository
+	guilds    domain.GuildRepository
+	channels  domain.ChannelRepository
+	publisher domain.ChannelEventPublisher
 }
 
 // NewChannelService constructs a ChannelService.
-func NewChannelService(guilds domain.GuildRepository, channels domain.ChannelRepository) *ChannelService {
+func NewChannelService(
+	guilds domain.GuildRepository,
+	channels domain.ChannelRepository,
+	publisher domain.ChannelEventPublisher,
+) *ChannelService {
+	if publisher == nil {
+		publisher = domain.NoopChannelEventPublisher{}
+	}
 	return &ChannelService{
-		guilds:   guilds,
-		channels: channels,
+		guilds:    guilds,
+		channels:  channels,
+		publisher: publisher,
 	}
 }
 
@@ -80,6 +89,7 @@ func (s *ChannelService) CreateChannel(ctx context.Context, userID, guildID uuid
 	if err := s.channels.Create(ctx, ch); err != nil {
 		return nil, err
 	}
+	s.publisher.PublishChannelCreate(ctx, guildID, *ch)
 	return ch, nil
 }
 
@@ -116,7 +126,12 @@ func (s *ChannelService) UpdateChannel(ctx context.Context, userID, channelID uu
 		params.Topic = topic
 	}
 
-	return s.channels.Update(ctx, channelID, params)
+	updated, err := s.channels.Update(ctx, channelID, params)
+	if err != nil {
+		return nil, err
+	}
+	s.publisher.PublishChannelUpdate(ctx, updated.GuildID, *updated)
+	return updated, nil
 }
 
 // DeleteChannel deletes a channel; only owner or admin is permitted.
@@ -134,7 +149,11 @@ func (s *ChannelService) DeleteChannel(ctx context.Context, userID, channelID uu
 		return domain.NewError(domain.ErrForbidden, "FORBIDDEN", "only guild owner or admin can delete channels")
 	}
 
-	return s.channels.Delete(ctx, channelID)
+	if err := s.channels.Delete(ctx, channelID); err != nil {
+		return err
+	}
+	s.publisher.PublishChannelDelete(ctx, ch.GuildID, *ch)
+	return nil
 }
 
 func validateChannelName(raw string) (string, error) {

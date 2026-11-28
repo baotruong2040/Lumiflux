@@ -30,21 +30,27 @@ type GuildService struct {
 	guilds        domain.GuildRepository
 	presence      domain.PresenceReader
 	subscriptions domain.GuildSubscriptionManager
+	publisher     domain.GuildEventPublisher
 }
 
-// NewGuildService constructs a GuildService with optional presence and subscription hooks.
+// NewGuildService constructs a GuildService with optional presence, subscription, and event publisher hooks.
 func NewGuildService(
 	guilds domain.GuildRepository,
 	presence domain.PresenceReader,
 	subscriptions domain.GuildSubscriptionManager,
+	publisher domain.GuildEventPublisher,
 ) *GuildService {
 	if subscriptions == nil {
 		subscriptions = domain.NoopGuildSubscriptionManager{}
+	}
+	if publisher == nil {
+		publisher = domain.NoopGuildEventPublisher{}
 	}
 	return &GuildService{
 		guilds:        guilds,
 		presence:      presence,
 		subscriptions: subscriptions,
+		publisher:     publisher,
 	}
 }
 
@@ -152,7 +158,11 @@ func (s *GuildService) DeleteGuild(ctx context.Context, userID, guildID uuid.UUI
 		return domain.NewError(domain.ErrForbidden, "FORBIDDEN", "only guild owner can delete the guild")
 	}
 
-	return s.guilds.Delete(ctx, guildID)
+	if err := s.guilds.Delete(ctx, guildID); err != nil {
+		return err
+	}
+	s.publisher.PublishGuildDelete(ctx, guildID)
+	return nil
 }
 
 // ListMembers returns all members of guildID enriched with best-effort online status.
@@ -197,6 +207,11 @@ func (s *GuildService) LeaveGuild(ctx context.Context, userID, guildID uuid.UUID
 	}
 
 	s.subscriptions.Unsubscribe(ctx, userID, guildID)
+	user := member.User
+	if user.ID == uuid.Nil {
+		user.ID = userID
+	}
+	s.publisher.PublishGuildMemberRemove(ctx, guildID, user)
 	return nil
 }
 

@@ -58,15 +58,20 @@ export function resolveOptimisticMessage(
   }
 
   let replaced = false
-  const nextPages = data.pages.map((page) =>
-    page.map((item) => {
+  const nextPages = data.pages.map((page) => {
+    const out: ChatMessage[] = []
+    for (const item of page) {
       if (item.id === confirmed.id || (item.nonce && item.nonce === nonce)) {
-        replaced = true
-        return confirmed
+        if (!replaced) {
+          replaced = true
+          out.push(confirmed)
+        }
+        continue
       }
-      return item
-    }),
-  )
+      out.push(item)
+    }
+    return out
+  })
 
   if (!replaced) {
     nextPages[0] = [confirmed, ...nextPages[0]]
@@ -75,6 +80,74 @@ export function resolveOptimisticMessage(
   return {
     ...data,
     pages: nextPages,
+  }
+}
+
+export function upsertIncomingMessage(
+  data: MessagesInfiniteData | undefined,
+  serverMsg: Message,
+): MessagesInfiniteData | undefined {
+  if (!data || data.pages.length === 0) {
+    return data
+  }
+
+  const confirmed: ChatMessage = {
+    ...serverMsg,
+    optimisticStatus: undefined,
+    errorMessage: undefined,
+  }
+
+  let replaced = false
+  const nextPages = data.pages.map((page) => {
+    const out: ChatMessage[] = []
+    for (const item of page) {
+      const matched =
+        item.id === confirmed.id ||
+        Boolean(confirmed.nonce && item.nonce && item.nonce === confirmed.nonce)
+      if (matched) {
+        if (!replaced) {
+          replaced = true
+          out.push(confirmed)
+        }
+        continue
+      }
+      out.push(item)
+    }
+    return out
+  })
+
+  if (!replaced) {
+    nextPages[0] = [confirmed, ...nextPages[0]]
+  }
+
+  return {
+    ...data,
+    pages: nextPages,
+  }
+}
+
+export function patchMessageInPages(
+  data: MessagesInfiniteData | undefined,
+  messageId: string,
+  patch: { content: string; editedAt: string | null },
+): MessagesInfiniteData | undefined {
+  if (!data) return data
+
+  return {
+    ...data,
+    pages: data.pages.map((page) =>
+      page.map((item) =>
+        item.id === messageId
+          ? {
+              ...item,
+              content: patch.content,
+              editedAt: patch.editedAt,
+              optimisticStatus: undefined,
+              errorMessage: undefined,
+            }
+          : item,
+      ),
+    ),
   }
 }
 

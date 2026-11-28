@@ -167,12 +167,15 @@ func (r *GuildRepository) Delete(ctx context.Context, guildID uuid.UUID) error {
 	return nil
 }
 
-// GetMember returns the membership record for userID in guildID.
+// GetMember returns the membership record joined with user profile for userID in guildID.
 func (r *GuildRepository) GetMember(ctx context.Context, guildID, userID uuid.UUID) (*domain.GuildMember, error) {
 	const query = `
-		SELECT guild_id, user_id, nickname, role, joined_at
-		FROM guild_members
-		WHERE guild_id = $1 AND user_id = $2`
+		SELECT
+			gm.guild_id, gm.user_id, gm.nickname, gm.role, gm.joined_at,
+			u.id, u.username, u.email, u.display_name, u.avatar_url, u.created_at
+		FROM guild_members gm
+		INNER JOIN users u ON u.id = gm.user_id
+		WHERE gm.guild_id = $1 AND gm.user_id = $2`
 
 	var m domain.GuildMember
 	var roleStr string
@@ -182,6 +185,12 @@ func (r *GuildRepository) GetMember(ctx context.Context, guildID, userID uuid.UU
 		&m.Nickname,
 		&roleStr,
 		&m.JoinedAt,
+		&m.User.ID,
+		&m.User.Username,
+		&m.User.Email,
+		&m.User.DisplayName,
+		&m.User.AvatarURL,
+		&m.User.CreatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

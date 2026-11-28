@@ -1,7 +1,28 @@
-.ws-shell {
+.ws-shell-wrap {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   width: 100vw;
+  overflow: hidden;
+  background-color: var(--bg-tertiary);
+}
+
+.ws-connection-banner {
+  background-color: #b45309;
+  color: #fffbeb;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  flex-shrink: 0;
+}
+
+.ws-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   overflow: hidden;
   background-color: var(--bg-tertiary);
   color: var(--text-primary);

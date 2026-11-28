@@ -1,8 +1,8 @@
 # Báo cáo Tiến độ Dự án — Discord Clone (Đồ án cơ sở 4)
 
 - **Khung thời gian triển khai:** 16/11/2026 – 29/11/2026 (14 ngày)
-- **Cập nhật lần cuối:** 25/11/2026
-- **Trạng thái tổng thể:** Đã hoàn thành Ngày 1, Ngày 2, Ngày 4, Ngày 5, Ngày 6, Ngày 7, Ngày 8, Ngày 9, Ngày 10, Ngày 11 và Ngày 12 (WebSocket Ticket Auth, Hub Actor & Client Gateway); còn bước xác nhận tương tác trực tiếp trên cửa sổ Desktop GUI Ngày 3 và chuyển sang Ngày 13 (Redis Pub/Sub & `GatewayClient` Realtime).
+- **Cập nhật lần cuối:** 28/11/2026
+- **Trạng thái tổng thể:** Đã hoàn thành Ngày 1, Ngày 2, Ngày 4–13 (Redis Pub/Sub `guild:{guildID}`, `GatewayClient.ts` & TanStack Query Realtime Sync); còn bước xác nhận tương tác trực tiếp trên cửa sổ Desktop GUI Ngày 3 và chuyển sang Ngày 14 (`Typing indicator`, `Presence`, `cmd/loadtest`, `npx tauri build`).
 
 ---
 
@@ -22,7 +22,7 @@
 | **Ngày 10** | Message Backend & Cursor Pagination theo UUIDv7 | **Hoàn thành** | Hoàn thiện `MessageRepository`, `MessageService` (rate limit `rl:{userID}:msg` `30/10s`, `nonce`, cursor pagination, RBAC sửa/xóa mềm), `MessageController`, `cmd/seed`; `TC-MSG-01..04`, `TC-GLD-06` + `go test -race ./...` xanh. |
 | **Ngày 11** | Chat UI & Optimistic Update (`nonce`) | **Hoàn thành** | Hoàn thiện `messageApi`, `useChannelMessages`, `MessageList`, `MessageComposer`; `npm run lint` (`0 warnings`), `npm run build`, `cargo check` xanh; Web E2E trên 1.000 tin nhắn seed pass (`TC-MSG-02`, `TC-UI-01..02`, sửa/xóa & F5). |
 | **Ngày 12** | WebSocket Gateway Backend (`Hub`, `Client`, `Ticket` dùng 1 lần) | **Hoàn thành** | Hoàn thiện `POST /api/v1/ws/ticket` (`GETDEL` TTL `30s`), `GET /ws?ticket=...`, `Hub` actor (`Subscribe`/`Unsubscribe`, shutdown `1001`), `Client` (`readPump`/`writePump`, `4002`); `TC-HUB-01..05`, `goleak`, `TC-WS-01`, `BenchmarkFanout` & `go test -race ./...` xanh. |
-| **Ngày 13** | Kết nối Redis Pub/Sub & Frontend Realtime (`GatewayClient`, `RESYNC`) | **Kế hoạch** | Chưa bắt đầu. |
+| **Ngày 13** | Kết nối Redis Pub/Sub & Frontend Realtime (`GatewayClient`, `RESYNC`) | **Hoàn thành** | Nối `redisstore.EventPublisher` + `gateway.Subscriber` (`MESSAGE_*`, `CHANNEL_*`, `GUILD_MEMBER_*`, `GUILD_DELETE`); dựng `events.ts` (Zod), `GatewayClient.ts` (`4003`, backoff+jitter, `RESYNC`), TanStack Query sync; `22/22` integration test (`TC-WS-01..02`, `TC-WS-06`, `TC-GLD-03/05/07`, `TC-MSG-03`), `gateway_client_test` `4/4`, và live 2 instance `:8080`/`:8081` (`p50=2.83ms`, `p95=4.39ms`) xanh. |
 | **Ngày 14** | Hoàn thiện nhóm `Should`, kiểm thử toàn luồng, đóng gói & tài liệu hóa | **Kế hoạch** | Chưa bắt đầu. |
 
 ---
@@ -94,7 +94,18 @@
   - `BenchmarkFanout`: `clients_1000` đạt `124688 ns/op`, `6 B/op`, `0 allocs/op`; `clients_10000` đạt `1867519 ns/op`, `2 B/op`, `0 allocs/op`.
   - Integration test thật (`RUN_INTEGRATION_TESTS=1 go test -v -race -count=1 ./internal/integration/...`): **18/18 pass**, bao gồm `TC-WS-01` (ticket TTL ≤ 30s trên Redis, upgrade `/ws` nhận `READY` + `HEARTBEAT_ACK`, dùng lại vé bị từ chối `401`).
 
+### Mốc Ngày 13 — Redis Pub/Sub & Frontend Realtime (`GatewayClient`, TanStack Query Sync) (28/11/2026)
+- **Backend (`discord-clone-api/`):**
+  - Bổ sung `internal/domain/events.go` (`ChannelEventPublisher`, `GuildEventPublisher`), sửa `GuildRepository.GetMember` join `users` để có đủ thông tin `User` khi phát `GUILD_MEMBER_REMOVE`, tạo `redisstore.EventPublisher` (`PUBLISH guild:{guildID}`), và nối `ChannelService`, `GuildService`, `InviteService`, `cmd/api/main.go`.
+  - Cập nhật `gateway.Hub` xử lý tuần tự các hành động FIFO qua `broadcastCh` (`BroadcastAndRemoveGuild`, `UnsubscribeAndBroadcast`, `SubscribeAndBroadcast`) và tạo `gateway.Subscriber` (`PSUBSCRIBE guild:*` với `context.AfterFunc` đóng sạch `pubsub`).
+  - `go vet ./...` và `go test -race -count=1` pass toàn bộ unit test; `internal/gateway/...` **8/8 pass** với `goleak.VerifyTestMain`; `internal/integration/...` (`RUN_INTEGRATION_TESTS=1`) **22/22 pass** (`TC-WS-01`, `TC-WS-02`, `TC-WS-06` 2 instance độc lập, `TC-GLD-03`, `TC-GLD-05`, `TC-GLD-07`, `TC-MSG-03`, `CHANNEL_CREATE/UPDATE/DELETE`).
+  - Kiểm thử live 2 tiến trình backend `:8080` và `:8081` trên PostgreSQL & Redis thật: `TC-WS-06` (20/20 tin nhắn chuyển tiếp qua Redis Pub/Sub đúng thứ tự, Echo RTT `p50=2.83ms`, `p95=4.39ms`, `p99=5.06ms`) và `TC-WS-03` (ngắt kết nối, gửi 5 tin, kết nối lại & `RESYNC` nhận đủ 5/5 tin) pass.
+- **Frontend (`discord-clone-app/`):**
+  - Bổ sung `wsApi` (`POST /api/v1/ws/ticket`), `src/core/gateway/events.ts` (Zod v4 discriminated union cho mọi frame WS), `src/core/gateway/GatewayClient.ts` (heartbeat `25s`, ACK timeout `10s` đóng mã `4003`, exponential backoff + jitter, `RESYNC` từ lần `READY` thứ 2), `src/features/realtime/` (`applyGatewayEventToCache`, `handleGatewayResync`, `useGatewayConnection`), banner tự kết nối lại trên `WorkspacePage`, và dedup `nonce` trong `messageHelpers.ts`.
+  - `npm run lint` (`oxlint`: `0 warnings, 0 errors` trên 39 file), `npm run build` (`tsc -b && vite build`), `cargo check`, và unit test `gateway_client_test.ts` (**4/4 pass**) xanh.
+  - Web Chrome E2E 2 tab (`http://127.0.0.1:5173/`): đăng ký `rt_e2e_chrome`, tạo server `Realtime E2E Guild`, mở tab 2 tự hydrate và nối `/ws`; Tab 1 gửi `Cross-tab realtime check` (dedup `nonce` hiện đúng 1 tin, tab 2 nhận ngay), sửa `Edited across tabs` (`(đã chỉnh sửa)` cập nhật live), xóa mềm, tạo kênh `#pubsub-live` và xóa server `Realtime E2E Guild` (`GUILD_DELETE` đưa cả 2 tab về màn hình chào mừng) đều cập nhật tức thì không cần F5, **0 lỗi console/CORS**.
+
 ---
 
 ## 3. Việc cần làm tiếp theo
-Bắt đầu **Ngày 13**: Nối **Redis Pub/Sub** (`MESSAGE_CREATE`/`MESSAGE_UPDATE`/`MESSAGE_DELETE`, `CHANNEL_*`, `GUILD_*`) vào `Hub` và xây dựng **Frontend Realtime (`GatewayClient.ts`)** (auto-reconnect backoff + jitter, `RESYNC` invalidate TanStack Query cache).
+Bắt đầu **Ngày 14**: Hoàn thiện nhóm tính năng `Should` (`TYPING_START`/`USER_TYPING`, `PRESENCE_UPDATE` online/offline), `cmd/loadtest` (10/100/500 client), kiểm thử đa nền tảng Web + `npx tauri build`, và hoàn thiện `README.md`.

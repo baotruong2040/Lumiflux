@@ -87,9 +87,10 @@ func TestInviteService_CreateAndAcceptLifecycle(t *testing.T) {
 	guildRepo.seedUser(thirdID, "third")
 	guildRepo.seedUser(outsiderID, "outsider")
 
+	pub := &recordingGuildPublisher{}
 	fixedNow := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
-	guildSvc := NewGuildService(guildRepo, nil, subs)
-	inviteSvc := NewInviteService(guildRepo, inviteRepo, subs)
+	guildSvc := NewGuildService(guildRepo, nil, subs, pub)
+	inviteSvc := NewInviteService(guildRepo, inviteRepo, subs, pub)
 	inviteSvc.now = func() time.Time { return fixedNow }
 
 	guild, err := guildSvc.CreateGuild(context.Background(), ownerID, CreateGuildInput{Name: "Invite Guild"})
@@ -130,6 +131,9 @@ func TestInviteService_CreateAndAcceptLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, guild.ID, joinedGuild.ID)
 	assert.Contains(t, subs.subscribed, subCall{userID: joinerID, guildID: guild.ID})
+	require.Len(t, pub.membersAdd, 1)
+	assert.Equal(t, joinerID, pub.membersAdd[0].UserID)
+	assert.Equal(t, "joiner", pub.membersAdd[0].User.Username)
 
 	// Member (non-owner) can also create an invite (ADR-005)
 	twoHours := 2

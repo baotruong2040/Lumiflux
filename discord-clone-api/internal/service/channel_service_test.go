@@ -107,13 +107,39 @@ func (r *stubChannelRepo) Delete(_ context.Context, channelID uuid.UUID) error {
 	return nil
 }
 
-func setupChannelTestEnv(t *testing.T) (*ChannelService, *stubGuildRepo, *stubChannelRepo, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
+type recordingChannelPublisher struct {
+	mu      sync.Mutex
+	created []domain.Channel
+	updated []domain.Channel
+	deleted []domain.Channel
+}
+
+func (p *recordingChannelPublisher) PublishChannelCreate(_ context.Context, _ uuid.UUID, ch domain.Channel) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.created = append(p.created, ch)
+}
+
+func (p *recordingChannelPublisher) PublishChannelUpdate(_ context.Context, _ uuid.UUID, ch domain.Channel) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.updated = append(p.updated, ch)
+}
+
+func (p *recordingChannelPublisher) PublishChannelDelete(_ context.Context, _ uuid.UUID, ch domain.Channel) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.deleted = append(p.deleted, ch)
+}
+
+func setupChannelTestEnv(t *testing.T) (*ChannelService, *recordingChannelPublisher, *stubGuildRepo, *stubChannelRepo, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID) {
 	t.Helper()
 
 	guilds := newStubGuildRepo()
 	channels := newStubChannelRepo()
-	guildSvc := NewGuildService(guilds, nil, nil)
-	channelSvc := NewChannelService(guilds, channels)
+	pub := &recordingChannelPublisher{}
+	guildSvc := NewGuildService(guilds, nil, nil, nil)
+	channelSvc := NewChannelService(guilds, channels, pub)
 
 	ownerID, err := idgen.NewUUIDv7()
 	require.NoError(t, err)
@@ -143,12 +169,12 @@ func setupChannelTestEnv(t *testing.T) (*ChannelService, *stubGuildRepo, *stubCh
 		Role:    domain.RoleMember,
 	}
 
-	return channelSvc, guilds, channels, guild.ID, ownerID, adminID, memberID, outsiderID
+	return channelSvc, pub, guilds, channels, guild.ID, ownerID, adminID, memberID, outsiderID
 }
 
 func TestChannelService_PermissionsAndList(t *testing.T) {
 	ctx := context.Background()
-	svc, _, _, guildID, ownerID, adminID, memberID, outsiderID := setupChannelTestEnv(t)
+	svc, pub, _, _, guildID, ownerID, adminID, memberID, outsiderID := setupChannelTestEnv(t)
 
 	// Member can list channels; outsider -> 403; missing guild -> 404.
 	list, err := svc.ListChannels(ctx, memberID, guildID)
@@ -213,11 +239,16 @@ func TestChannelService_PermissionsAndList(t *testing.T) {
 	require.NoError(t, svc.DeleteChannel(ctx, adminID, ch1.ID))
 	err = svc.DeleteChannel(ctx, ownerID, ch1.ID)
 	assert.ErrorIs(t, err, domain.ErrNotFound)
+
+	assert.Len(t, pub.created, 2)
+	assert.Len(t, pub.updated, 2)
+	assert.Len(t, pub.deleted, 1)
+	assert.Equal(t, ch1.ID, pub.deleted[0].ID)
 }
 
 func TestChannelService_ValidationAndDuplicates(t *testing.T) {
 	ctx := context.Background()
-	svc, _, _, guildID, ownerID, _, _, _ := setupChannelTestEnv(t)
+	svc, _, _, _, guildID, ownerID, _, _, _ := setupChannelTestEnv(t)
 
 	// Empty / too-long name and too-long topic -> 400 validation errors.
 	_, err := svc.CreateChannel(ctx, ownerID, guildID, CreateChannelInput{Name: "   "})

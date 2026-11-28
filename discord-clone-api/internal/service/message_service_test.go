@@ -170,7 +170,7 @@ func setupMessageTestEnv(t *testing.T) (
 
 	guilds := newStubGuildRepo()
 	channels := newStubChannelRepo()
-	guildSvc := NewGuildService(guilds, nil, nil)
+	guildSvc := NewGuildService(guilds, nil, nil, nil)
 
 	ownerID, _ := idgen.NewUUIDv7()
 	adminID, _ := idgen.NewUUIDv7()

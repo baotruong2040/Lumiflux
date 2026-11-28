@@ -11,7 +11,6 @@ import (
 
 	"github.com/truong/discord-clone-api/internal/config"
 	"github.com/truong/discord-clone-api/internal/controller"
-	"github.com/truong/discord-clone-api/internal/domain"
 	"github.com/truong/discord-clone-api/internal/gateway"
 	"github.com/truong/discord-clone-api/internal/repository/postgres"
 	"github.com/truong/discord-clone-api/internal/repository/redisstore"
@@ -74,18 +73,27 @@ func main() {
 		defer close(hubDone)
 		hub.Run(ctx)
 	}()
-	msgPublisher := domain.NoopMessageEventPublisher{}
+
+	eventPublisher := redisstore.NewEventPublisher(redisClient, log)
+	subscriber := gateway.NewSubscriber(redisClient, hub, log)
+	subDone, err := subscriber.Start(ctx)
+	if err != nil {
+		log.Error("failed to start redis pubsub subscriber", "err", err)
+		stop()
+		<-hubDone
+		os.Exit(1)
+	}
 
 	authSvc := service.NewAuthService(userRepo, tokenStore, pwHasher, jwtMgr, cfg.RefreshTokenTTL)
-	guildSvc := service.NewGuildService(guildRepo, presenceStore, hub)
-	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, hub)
-	channelSvc := service.NewChannelService(guildRepo, channelRepo)
+	guildSvc := service.NewGuildService(guildRepo, presenceStore, hub, eventPublisher)
+	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, hub, eventPublisher)
+	channelSvc := service.NewChannelService(guildRepo, channelRepo, eventPublisher)
 	messageSvc := service.NewMessageService(
 		guildRepo,
 		channelRepo,
 		messageRepo,
 		rateLimiter,
-		msgPublisher,
+		eventPublisher,
 		cfg.MessageRateLimit,
 		cfg.MessageRateWindow,
 	)
@@ -132,6 +140,7 @@ func main() {
 		log.Info("shutdown signal received")
 	case serveErr := <-errCh:
 		stop()
+		<-subDone
 		<-hubDone
 		if serveErr != nil {
 			log.Error("http server error", "err", serveErr)
@@ -146,6 +155,11 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error("graceful shutdown failed", "err", err)
 		os.Exit(1)
+	}
+	select {
+	case <-subDone:
+	case <-shutdownCtx.Done():
+		log.Warn("timed out waiting for redis subscriber shutdown")
 	}
 	select {
 	case <-hubDone:

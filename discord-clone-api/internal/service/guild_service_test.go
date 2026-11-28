@@ -120,6 +120,9 @@ func (r *stubGuildRepo) GetMember(_ context.Context, guildID, userID uuid.UUID) 
 	if !ok {
 		return nil, domain.NewError(domain.ErrNotFound, "MEMBER_NOT_FOUND", "member not found")
 	}
+	if u, hasUser := r.users[userID]; hasUser {
+		m.User = u
+	}
 	cp := m
 	return &cp, nil
 }
@@ -184,15 +187,47 @@ func (s *spySubManager) Unsubscribe(_ context.Context, userID, guildID uuid.UUID
 	s.unsubscribed = append(s.unsubscribed, subCall{userID: userID, guildID: guildID})
 }
 
+type recordingGuildPublisher struct {
+	mu          sync.Mutex
+	membersAdd  []domain.GuildMember
+	membersLeft []struct {
+		guildID uuid.UUID
+		user    domain.User
+	}
+	deletedGuilds []uuid.UUID
+}
+
+func (p *recordingGuildPublisher) PublishGuildMemberAdd(_ context.Context, _ uuid.UUID, member domain.GuildMember) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.membersAdd = append(p.membersAdd, member)
+}
+
+func (p *recordingGuildPublisher) PublishGuildMemberRemove(_ context.Context, guildID uuid.UUID, user domain.User) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.membersLeft = append(p.membersLeft, struct {
+		guildID uuid.UUID
+		user    domain.User
+	}{guildID: guildID, user: user})
+}
+
+func (p *recordingGuildPublisher) PublishGuildDelete(_ context.Context, guildID uuid.UUID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.deletedGuilds = append(p.deletedGuilds, guildID)
+}
+
 func TestGuildService_CreateAndCRUD(t *testing.T) {
 	repo := newStubGuildRepo()
 	subs := &spySubManager{}
+	pub := &recordingGuildPublisher{}
 	ownerID := idgen.MustUUIDv7()
 	otherID := idgen.MustUUIDv7()
 	repo.seedUser(ownerID, "owner_user")
 	repo.seedUser(otherID, "member_user")
 
-	svc := NewGuildService(repo, &stubPresenceReader{online: map[uuid.UUID]bool{ownerID: true}}, subs)
+	svc := NewGuildService(repo, &stubPresenceReader{online: map[uuid.UUID]bool{ownerID: true}}, subs, pub)
 
 	// Invalid guild name
 	_, err := svc.CreateGuild(context.Background(), ownerID, CreateGuildInput{Name: "   "})
@@ -257,6 +292,7 @@ func TestGuildService_CreateAndCRUD(t *testing.T) {
 
 	// Owner can delete guild
 	require.NoError(t, svc.DeleteGuild(context.Background(), ownerID, guild.ID))
+	assert.Equal(t, []uuid.UUID{guild.ID}, pub.deletedGuilds)
 	_, err = svc.GetGuild(context.Background(), ownerID, guild.ID)
 	assert.ErrorIs(t, err, domain.ErrNotFound)
 }
@@ -264,6 +300,7 @@ func TestGuildService_CreateAndCRUD(t *testing.T) {
 func TestGuildService_LeaveGuildAndADR007(t *testing.T) {
 	repo := newStubGuildRepo()
 	subs := &spySubManager{}
+	pub := &recordingGuildPublisher{}
 	ownerID := idgen.MustUUIDv7()
 	memberID := idgen.MustUUIDv7()
 	adminID := idgen.MustUUIDv7()
@@ -271,7 +308,7 @@ func TestGuildService_LeaveGuildAndADR007(t *testing.T) {
 	repo.seedUser(memberID, "member")
 	repo.seedUser(adminID, "admin")
 
-	svc := NewGuildService(repo, nil, subs)
+	svc := NewGuildService(repo, nil, subs, pub)
 	guild, err := svc.CreateGuild(context.Background(), ownerID, CreateGuildInput{Name: "Leave Test"})
 	require.NoError(t, err)
 
@@ -282,6 +319,7 @@ func TestGuildService_LeaveGuildAndADR007(t *testing.T) {
 	err = svc.LeaveGuild(context.Background(), ownerID, guild.ID)
 	assert.ErrorIs(t, err, domain.ErrForbidden)
 	assert.Empty(t, subs.unsubscribed)
+	assert.Empty(t, pub.membersLeft)
 
 	// Member and Admin can leave and trigger hub.Unsubscribe (ADR-007)
 	require.NoError(t, svc.LeaveGuild(context.Background(), memberID, guild.ID))
@@ -290,6 +328,9 @@ func TestGuildService_LeaveGuildAndADR007(t *testing.T) {
 		{userID: memberID, guildID: guild.ID},
 		{userID: adminID, guildID: guild.ID},
 	}, subs.unsubscribed)
+	require.Len(t, pub.membersLeft, 2)
+	assert.Equal(t, memberID, pub.membersLeft[0].user.ID)
+	assert.Equal(t, "member", pub.membersLeft[0].user.Username)
 
 	// Already left -> 403
 	err = svc.LeaveGuild(context.Background(), memberID, guild.ID)

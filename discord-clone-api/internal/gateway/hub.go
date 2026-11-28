@@ -25,9 +25,20 @@ type registerReq struct {
 	reply  chan bool
 }
 
+type broadcastAction uint8
+
+const (
+	broadcastOnly broadcastAction = iota
+	broadcastThenRemoveGuild
+	unsubscribeThenBroadcast
+	subscribeThenBroadcast
+)
+
 type broadcastMsg struct {
 	guildID uuid.UUID
+	userID  uuid.UUID
 	frame   []byte
+	action  broadcastAction
 }
 
 type clientFrame struct {
@@ -113,7 +124,19 @@ func (h *Hub) Run(ctx context.Context) {
 			h.removeClient(c, CloseNormalClosure, "")
 
 		case msg := <-h.broadcastCh:
-			h.fanoutGuild(msg.guildID, msg.frame)
+			switch msg.action {
+			case broadcastThenRemoveGuild:
+				h.fanoutGuild(msg.guildID, msg.frame)
+				h.removeGuildLocked(msg.guildID)
+			case unsubscribeThenBroadcast:
+				h.unsubscribeUserFromGuild(msg.userID, msg.guildID)
+				h.fanoutGuild(msg.guildID, msg.frame)
+			case subscribeThenBroadcast:
+				h.subscribeUserToGuild(msg.userID, msg.guildID)
+				h.fanoutGuild(msg.guildID, msg.frame)
+			default:
+				h.fanoutGuild(msg.guildID, msg.frame)
+			}
 
 		case direct := <-h.directCh:
 			if _, ok := h.clients[direct.client]; ok {
@@ -161,67 +184,128 @@ func (h *Hub) Unregister(client *Client) {
 
 // Subscribe dynamically adds all active sessions of userID to guildID's broadcast set (ADR-007).
 func (h *Hub) Subscribe(ctx context.Context, userID, guildID uuid.UUID) {
-	h.submitCmd(ctx, func() {
-		conns := h.users[userID]
-		if len(conns) == 0 {
-			return
-		}
-		guildSet, ok := h.guilds[guildID]
-		if !ok {
-			guildSet = make(map[*Client]struct{}, len(conns))
-			h.guilds[guildID] = guildSet
-		}
-		for c := range conns {
-			guildSet[c] = struct{}{}
-			c.guilds[guildID] = struct{}{}
-		}
+	h.submitCmdSync(ctx, func() {
+		h.subscribeUserToGuild(userID, guildID)
 	})
 }
 
 // Unsubscribe dynamically removes all active sessions of userID from guildID's broadcast set (ADR-007).
 func (h *Hub) Unsubscribe(ctx context.Context, userID, guildID uuid.UUID) {
-	h.submitCmd(ctx, func() {
-		conns := h.users[userID]
-		if len(conns) == 0 {
-			return
-		}
-		guildSet := h.guilds[guildID]
-		for c := range conns {
-			delete(c.guilds, guildID)
-			if guildSet != nil {
-				delete(guildSet, c)
-			}
-		}
-		if guildSet != nil && len(guildSet) == 0 {
-			delete(h.guilds, guildID)
-		}
+	h.submitCmdSync(ctx, func() {
+		h.unsubscribeUserFromGuild(userID, guildID)
 	})
 }
 
 // RemoveGuild cleans up all client subscriptions when a guild is deleted.
 func (h *Hub) RemoveGuild(ctx context.Context, guildID uuid.UUID) {
-	h.submitCmd(ctx, func() {
-		guildSet := h.guilds[guildID]
-		for c := range guildSet {
-			delete(c.guilds, guildID)
-		}
-		delete(h.guilds, guildID)
+	h.submitCmdSync(ctx, func() {
+		h.removeGuildLocked(guildID)
 	})
 }
 
 // BroadcastToGuild enqueues frame for every client subscribed to guildID.
 func (h *Hub) BroadcastToGuild(ctx context.Context, guildID uuid.UUID, frame []byte) bool {
-	if len(frame) == 0 {
+	return h.enqueueBroadcast(ctx, broadcastMsg{
+		guildID: guildID,
+		frame:   frame,
+		action:  broadcastOnly,
+	})
+}
+
+// BroadcastAndRemoveGuild atomically fans out frame to guildID members and removes guildID subscriptions.
+func (h *Hub) BroadcastAndRemoveGuild(ctx context.Context, guildID uuid.UUID, frame []byte) bool {
+	return h.enqueueBroadcast(ctx, broadcastMsg{
+		guildID: guildID,
+		frame:   frame,
+		action:  broadcastThenRemoveGuild,
+	})
+}
+
+// UnsubscribeAndBroadcast atomically unsubscribes userID from guildID and broadcasts frame to remaining members.
+func (h *Hub) UnsubscribeAndBroadcast(ctx context.Context, userID, guildID uuid.UUID, frame []byte) bool {
+	return h.enqueueBroadcast(ctx, broadcastMsg{
+		guildID: guildID,
+		userID:  userID,
+		frame:   frame,
+		action:  unsubscribeThenBroadcast,
+	})
+}
+
+// SubscribeAndBroadcast atomically subscribes active sessions of userID to guildID and broadcasts frame.
+func (h *Hub) SubscribeAndBroadcast(ctx context.Context, userID, guildID uuid.UUID, frame []byte) bool {
+	return h.enqueueBroadcast(ctx, broadcastMsg{
+		guildID: guildID,
+		userID:  userID,
+		frame:   frame,
+		action:  subscribeThenBroadcast,
+	})
+}
+
+func (h *Hub) enqueueBroadcast(ctx context.Context, msg broadcastMsg) bool {
+	if len(msg.frame) == 0 {
 		return false
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	select {
-	case h.broadcastCh <- broadcastMsg{guildID: guildID, frame: frame}:
+	case h.broadcastCh <- msg:
 		return true
 	case <-h.done:
 		return false
 	case <-ctx.Done():
 		return false
 	}
+}
+
+func (h *Hub) subscribeUserToGuild(userID, guildID uuid.UUID) {
+	if userID == uuid.Nil || guildID == uuid.Nil {
+		return
+	}
+	conns := h.users[userID]
+	if len(conns) == 0 {
+		return
+	}
+	guildSet, ok := h.guilds[guildID]
+	if !ok {
+		guildSet = make(map[*Client]struct{}, len(conns))
+		h.guilds[guildID] = guildSet
+	}
+	for c := range conns {
+		guildSet[c] = struct{}{}
+		c.guilds[guildID] = struct{}{}
+	}
+}
+
+func (h *Hub) unsubscribeUserFromGuild(userID, guildID uuid.UUID) {
+	if userID == uuid.Nil || guildID == uuid.Nil {
+		return
+	}
+	conns := h.users[userID]
+	if len(conns) == 0 {
+		return
+	}
+	guildSet := h.guilds[guildID]
+	for c := range conns {
+		delete(c.guilds, guildID)
+		if guildSet != nil {
+			delete(guildSet, c)
+		}
+	}
+	if guildSet != nil && len(guildSet) == 0 {
+		delete(h.guilds, guildID)
+	}
+}
+
+func (h *Hub) removeGuildLocked(guildID uuid.UUID) {
+	if guildID == uuid.Nil {
+		return
+	}
+	guildSet := h.guilds[guildID]
+	for c := range guildSet {
+		delete(c.guilds, guildID)
+	}
+	delete(h.guilds, guildID)
 }
 
 // SendToClient enqueues a frame for a single connected client.

@@ -541,9 +541,9 @@ func newTestRouterWithCleanup(t *testing.T, pgErr, redisErr error) (*gin.Engine,
 		jwtMgr,
 		cfg.RefreshTokenTTL,
 	)
-	guildSvc := service.NewGuildService(guildRepo, nil, domain.NoopGuildSubscriptionManager{})
-	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, domain.NoopGuildSubscriptionManager{})
-	channelSvc := service.NewChannelService(guildRepo, channelRepo)
+	guildSvc := service.NewGuildService(guildRepo, nil, domain.NoopGuildSubscriptionManager{}, domain.NoopGuildEventPublisher{})
+	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, domain.NoopGuildSubscriptionManager{}, domain.NoopGuildEventPublisher{})
+	channelSvc := service.NewChannelService(guildRepo, channelRepo, domain.NoopChannelEventPublisher{})
 	messageSvc := service.NewMessageService(
 		guildRepo,
 		channelRepo,

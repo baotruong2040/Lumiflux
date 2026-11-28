@@ -2,6 +2,7 @@ export { authApi } from './authApi'
 export { channelApi } from './channelApi'
 export { guildApi } from './guildApi'
 export { messageApi } from './messageApi'
+export { wsApi } from './wsApi'
 export { configureHttpClientAuth, createHttpClient, httpClient } from './httpClient'
 export type {
   CreateHttpClientOptions,
@@ -34,4 +35,5 @@ export type {
   UpdateMessageRequest,
   UpdateMeRequest,
   User,
+  WSTicketResponse,
 } from './types'

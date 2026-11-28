@@ -522,10 +522,14 @@ Nâng cấp kết nối lên WebSocket sau khi:
 2. Tiêu thụ vé nguyên tử bằng lệnh Redis `GETDEL wsticket:{ticket}` -> trả `401 UNAUTHORIZED` (`INVALID_TICKET`) nếu thiếu, sai hoặc đã dùng trước đó.
 3. Tải danh sách server user tham gia, đăng ký vào `Hub` actor và gửi frame `READY`.
 
-**Sự kiện đã triển khai (Ngày 12):**
-- Server $\rightarrow$ Client: `READY` (`{ userId, guildIds, heartbeatIntervalMs }`), `HEARTBEAT_ACK` (`{}`), `ERROR` (`{ code, message }`).
-- Client $\rightarrow$ Server: `HEARTBEAT` (làm mới read deadline & trả `HEARTBEAT_ACK`), `TYPING_START` *(hook sẵn sàng cho Ngày 13–14)*.
-- Mã đóng WebSocket: `1000` (đóng bình thường), `1001` (server shutdown), `4002` (slow consumer — tràn hàng đợi gửi 256 frame), `4003` (client tự đóng khi mất heartbeat).
+**Sự kiện đã triển khai (Ngày 12–13):**
+- Server $\rightarrow$ Client (qua Redis Pub/Sub `guild:{guildID}` & `gateway.Subscriber` $\rightarrow$ `Hub`):
+  - `READY` (`{ userId, guildIds, heartbeatIntervalMs }`), `HEARTBEAT_ACK` (`{}`), `ERROR` (`{ code, message }`).
+  - `MESSAGE_CREATE`, `MESSAGE_UPDATE`, `MESSAGE_DELETE`.
+  - `CHANNEL_CREATE`, `CHANNEL_UPDATE`, `CHANNEL_DELETE` (`{ guildId, channel }`).
+  - `GUILD_MEMBER_ADD` (`{ guildId, user, role, nickname, joinedAt }`), `GUILD_MEMBER_REMOVE` (`{ guildId, user }`), `GUILD_DELETE` (`{ guildId }`).
+- Client $\rightarrow$ Server: `HEARTBEAT` (mỗi `heartbeatIntervalMs`, timeout ACK `10s` -> `4003`), `TYPING_START` *(hook sẵn sàng cho Ngày 14)*.
+- Mã đóng WebSocket: `1000` (đóng bình thường), `1001` (server shutdown), `4002` (slow consumer — tràn hàng đợi gửi 256 frame), `4003` (client tự đóng khi quá `10s` không nhận `HEARTBEAT_ACK`).
 
 ---
 
@@ -566,4 +570,4 @@ Nâng cấp kết nối lên WebSocket sau khi:
 | **Guilds & Invites** | `/api/v1/guilds/**`, `/api/v1/invites/{code}/accept` | Đã triển khai |
 | **Channels** | `/api/v1/guilds/{guildId}/channels`, `/api/v1/channels/{channelId}` | Đã triển khai |
 | **Messages** | `/api/v1/channels/{channelId}/messages/**` | Đã triển khai |
-| **WebSocket** | `POST /api/v1/ws/ticket`, `GET /ws?ticket=...` | Đã triển khai *(Redis Pub/Sub & `GatewayClient` FE vào Ngày 13)* |
+| **WebSocket** | `POST /api/v1/ws/ticket`, `GET /ws?ticket=...` | Đã triển khai *(Redis Pub/Sub `guild:{guildID}` & `GatewayClient` FE + `RESYNC`)* |

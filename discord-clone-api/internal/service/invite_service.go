@@ -34,6 +34,7 @@ type InviteService struct {
 	guilds        domain.GuildRepository
 	invites       domain.InviteRepository
 	subscriptions domain.GuildSubscriptionManager
+	publisher     domain.GuildEventPublisher
 	now           func() time.Time
 }
 
@@ -42,14 +43,19 @@ func NewInviteService(
 	guilds domain.GuildRepository,
 	invites domain.InviteRepository,
 	subscriptions domain.GuildSubscriptionManager,
+	publisher domain.GuildEventPublisher,
 ) *InviteService {
 	if subscriptions == nil {
 		subscriptions = domain.NoopGuildSubscriptionManager{}
+	}
+	if publisher == nil {
+		publisher = domain.NoopGuildEventPublisher{}
 	}
 	return &InviteService{
 		guilds:        guilds,
 		invites:       invites,
 		subscriptions: subscriptions,
+		publisher:     publisher,
 		now:           func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -111,12 +117,15 @@ func (s *InviteService) AcceptInvite(ctx context.Context, userID uuid.UUID, code
 		return nil, domain.NewError(domain.ErrValidation, "VALIDATION_ERROR", "invite code is invalid")
 	}
 
-	guild, _, err := s.invites.Accept(ctx, trimmed, userID, s.now())
+	guild, member, err := s.invites.Accept(ctx, trimmed, userID, s.now())
 	if err != nil {
 		return nil, err
 	}
 
 	s.subscriptions.Subscribe(ctx, userID, guild.ID)
+	if member != nil {
+		s.publisher.PublishGuildMemberAdd(ctx, guild.ID, *member)
+	}
 	return guild, nil
 }
 

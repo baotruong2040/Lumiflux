@@ -134,6 +134,10 @@ export interface UpdateMessageRequest {
   content: string
 }
 
+export interface WSTicketResponse {
+  ticket: string
+}
+
 export interface ApiErrorEnvelope {
   error: {
     code: string

@@ -43,20 +43,29 @@ type subEvent struct {
 
 type recordingSubManager struct {
 	mu           sync.Mutex
+	downstream   domain.GuildSubscriptionManager
 	subscribed   []subEvent
 	unsubscribed []subEvent
 }
 
-func (m *recordingSubManager) Subscribe(_ context.Context, userID, guildID uuid.UUID) {
+func (m *recordingSubManager) Subscribe(ctx context.Context, userID, guildID uuid.UUID) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.subscribed = append(m.subscribed, subEvent{userID: userID, guildID: guildID})
+	downstream := m.downstream
+	m.mu.Unlock()
+	if downstream != nil {
+		downstream.Subscribe(ctx, userID, guildID)
+	}
 }
 
-func (m *recordingSubManager) Unsubscribe(_ context.Context, userID, guildID uuid.UUID) {
+func (m *recordingSubManager) Unsubscribe(ctx context.Context, userID, guildID uuid.UUID) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.unsubscribed = append(m.unsubscribed, subEvent{userID: userID, guildID: guildID})
+	downstream := m.downstream
+	m.mu.Unlock()
+	if downstream != nil {
+		downstream.Unsubscribe(ctx, userID, guildID)
+	}
 }
 
 func (m *recordingSubManager) snapshot() (subscribed []subEvent, unsubscribed []subEvent) {
@@ -79,6 +88,89 @@ type testEnv struct {
 	redisClean      []string
 }
 
+func newIntegrationBackendInstance(
+	t *testing.T,
+	cfg *config.Config,
+	pool *pgxpool.Pool,
+	redisClient *redis.Client,
+	subs *recordingSubManager,
+) http.Handler {
+	t.Helper()
+
+	log := logger.NewWithWriter(io.Discard, "error")
+	jwtMgr := jwtutil.NewManager(cfg.JWTSecret, cfg.AccessTokenTTL)
+	userRepo := postgres.NewUserRepository(pool)
+	guildRepo := postgres.NewGuildRepository(pool)
+	channelRepo := postgres.NewChannelRepository(pool)
+	messageRepo := postgres.NewMessageRepository(pool)
+	inviteRepo := postgres.NewInviteRepository(pool)
+	rateLimiter := redisstore.NewRateLimiter(redisClient)
+	ticketStore := redisstore.NewTicketStore(redisClient)
+	eventPublisher := redisstore.NewEventPublisher(redisClient, log)
+
+	rtCtx, rtCancel := context.WithCancel(context.Background())
+	hub := gateway.NewHub(cfg.WSHeartbeatInterval, log)
+	hubDone := make(chan struct{})
+	go func() {
+		defer close(hubDone)
+		hub.Run(rtCtx)
+	}()
+
+	var subManager domain.GuildSubscriptionManager = hub
+	if subs != nil {
+		subs.downstream = hub
+		subManager = subs
+	}
+
+	subscriber := gateway.NewSubscriber(redisClient, hub, log)
+	subDone, err := subscriber.Start(rtCtx)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		rtCancel()
+		<-subDone
+		<-hubDone
+	})
+
+	authSvc := service.NewAuthService(
+		userRepo,
+		redisstore.NewTokenStore(redisClient),
+		hasher.NewBcryptHasher(bcrypt.MinCost),
+		jwtMgr,
+		cfg.RefreshTokenTTL,
+	)
+	guildSvc := service.NewGuildService(guildRepo, redisstore.NewPresenceStore(redisClient), subManager, eventPublisher)
+	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, subManager, eventPublisher)
+	channelSvc := service.NewChannelService(guildRepo, channelRepo, eventPublisher)
+	messageSvc := service.NewMessageService(
+		guildRepo,
+		channelRepo,
+		messageRepo,
+		rateLimiter,
+		eventPublisher,
+		cfg.MessageRateLimit,
+		cfg.MessageRateWindow,
+	)
+	ticketSvc := service.NewTicketService(ticketStore, cfg.WSTicketTTL)
+	wsHandler := gateway.NewHandler(hub, ticketSvc, guildRepo, cfg.CORSAllowedOrigins, log)
+
+	return router.New(router.Dependencies{
+		Config:             cfg,
+		Logger:             log,
+		TokenManager:       jwtMgr,
+		RateLimiter:        rateLimiter,
+		HealthController:   controller.NewHealthController(postgres.NewHealthChecker(pool), redisstore.NewHealthChecker(redisClient), log),
+		AuthController:     controller.NewAuthController(authSvc),
+		UserController:     controller.NewUserController(authSvc, middleware.GetUserID),
+		GuildController:    controller.NewGuildController(guildSvc, middleware.GetUserID),
+		InviteController:   controller.NewInviteController(inviteSvc, middleware.GetUserID),
+		ChannelController:  controller.NewChannelController(channelSvc, middleware.GetUserID),
+		MessageController:  controller.NewMessageController(messageSvc, middleware.GetUserID),
+		WSTicketController: controller.NewWSTicketController(ticketSvc, middleware.GetUserID),
+		WSHandler:          wsHandler.ServeGin,
+	})
+}
+
 func setupIntegrationEnv(t *testing.T) *testEnv {
 	t.Helper()
 	if os.Getenv("RUN_INTEGRATION_TESTS") != "1" {
@@ -96,74 +188,18 @@ func setupIntegrationEnv(t *testing.T) *testEnv {
 	redisClient, err := redisstore.NewClient(ctx, cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
 	require.NoError(t, err)
 
-	log := logger.NewWithWriter(io.Discard, "error")
 	jwtMgr := jwtutil.NewManager(cfg.JWTSecret, cfg.AccessTokenTTL)
-	userRepo := postgres.NewUserRepository(pool)
-	guildRepo := postgres.NewGuildRepository(pool)
-	channelRepo := postgres.NewChannelRepository(pool)
-	messageRepo := postgres.NewMessageRepository(pool)
-	inviteRepo := postgres.NewInviteRepository(pool)
-	rateLimiter := redisstore.NewRateLimiter(redisClient)
-	ticketStore := redisstore.NewTicketStore(redisClient)
 	subs := &recordingSubManager{}
-	hubCtx, hubCancel := context.WithCancel(context.Background())
-	hub := gateway.NewHub(cfg.WSHeartbeatInterval, log)
-	hubDone := make(chan struct{})
-	go func() {
-		defer close(hubDone)
-		hub.Run(hubCtx)
-	}()
-
-	authSvc := service.NewAuthService(
-		userRepo,
-		redisstore.NewTokenStore(redisClient),
-		hasher.NewBcryptHasher(bcrypt.MinCost),
-		jwtMgr,
-		cfg.RefreshTokenTTL,
-	)
-	guildSvc := service.NewGuildService(guildRepo, redisstore.NewPresenceStore(redisClient), subs)
-	inviteSvc := service.NewInviteService(guildRepo, inviteRepo, subs)
-	channelSvc := service.NewChannelService(guildRepo, channelRepo)
-	messageSvc := service.NewMessageService(
-		guildRepo,
-		channelRepo,
-		messageRepo,
-		rateLimiter,
-		domain.NoopMessageEventPublisher{},
-		cfg.MessageRateLimit,
-		cfg.MessageRateWindow,
-	)
-	ticketSvc := service.NewTicketService(ticketStore, cfg.WSTicketTTL)
-	wsHandler := gateway.NewHandler(hub, ticketSvc, guildRepo, cfg.CORSAllowedOrigins, log)
-
-	engine := router.New(router.Dependencies{
-		Config:             cfg,
-		Logger:             log,
-		TokenManager:       jwtMgr,
-		RateLimiter:        rateLimiter,
-		HealthController:   controller.NewHealthController(postgres.NewHealthChecker(pool), redisstore.NewHealthChecker(redisClient), log),
-		AuthController:     controller.NewAuthController(authSvc),
-		UserController:     controller.NewUserController(authSvc, middleware.GetUserID),
-		GuildController:    controller.NewGuildController(guildSvc, middleware.GetUserID),
-		InviteController:   controller.NewInviteController(inviteSvc, middleware.GetUserID),
-		ChannelController:  controller.NewChannelController(channelSvc, middleware.GetUserID),
-		MessageController:  controller.NewMessageController(messageSvc, middleware.GetUserID),
-		WSTicketController: controller.NewWSTicketController(ticketSvc, middleware.GetUserID),
-		WSHandler:          wsHandler.ServeGin,
-	})
-
 	env := &testEnv{
-		cfg:     cfg,
-		pool:    pool,
-		redis:   redisClient,
-		jwtMgr:  jwtMgr,
-		subs:    subs,
-		handler: engine,
+		cfg:    cfg,
+		pool:   pool,
+		redis:  redisClient,
+		jwtMgr: jwtMgr,
+		subs:   subs,
 	}
 
+	// Register DB/Redis cleanup before backend instance cleanup so t.Cleanup LIFO stops Hub+Subscriber first.
 	t.Cleanup(func() {
-		hubCancel()
-		<-hubDone
 		cleanCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		for _, gid := range env.createdGuildIDs {
@@ -179,6 +215,7 @@ func setupIntegrationEnv(t *testing.T) *testEnv {
 		env.pool.Close()
 	})
 
+	env.handler = newIntegrationBackendInstance(t, cfg, pool, redisClient, subs)
 	return env
 }
 
